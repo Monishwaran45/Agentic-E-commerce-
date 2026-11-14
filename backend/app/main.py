@@ -16,6 +16,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Vasool Recovery Router (Spec v0.2)
+try:
+    from app.recovery import router as recovery_router
+    app.include_router(recovery_router)
+except ImportError:
+    from recovery import router as recovery_router
+    app.include_router(recovery_router)
+
 
 @app.get("/health")
 def health_check():
