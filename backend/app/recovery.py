@@ -347,6 +347,40 @@ def verify_service_auth(
                 detail={"code": "AUTH_INVALID", "message": "Invalid or missing service token"}
             )
 
+def dispatch_recoverax_payment_event(
+    case_id: str,
+    recovery_order_id: str,
+    razorpay_order_id: str,
+    payment_id: str,
+    amount_minor: int,
+    currency: str
+):
+    """Dispatches asynchronous payment-event notification to RecoveraX if RECOVERAX_BASE_URL is configured."""
+    if not RECOVERAX_BASE_URL:
+        return
+    import httpx
+    try:
+        url = f"{RECOVERAX_BASE_URL}/cases/{case_id}/payment-event"
+        headers = {
+            "Authorization": f"Bearer {SERVICE_TOKEN}",
+            "X-Service-Token": SERVICE_TOKEN,
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "event": "payment_verified",
+            "case_id": case_id,
+            "recovery_order_id": recovery_order_id,
+            "razorpay_order_id": razorpay_order_id,
+            "payment_id": payment_id,
+            "amount_minor": amount_minor,
+            "currency": currency,
+            "timestamp": int(time.time())
+        }
+        with httpx.Client(timeout=3.0) as client:
+            client.post(url, headers=headers, json=payload)
+    except Exception as e:
+        print(f"[RecoveraX Dispatch] Warning: unable to notify {RECOVERAX_BASE_URL}: {e}")
+
 # ---------------------------------------------------------------------------
 # Request & Response Models
 # ---------------------------------------------------------------------------
@@ -719,6 +753,16 @@ def verify_payment(req: PaymentVerificationRequest):
         }
     )
 
+    # Dispatch payment-event notification to RecoveraX (Spec Section 7 & 8)
+    dispatch_recoverax_payment_event(
+        case_id=order["case_id"],
+        recovery_order_id=recovery_order_id,
+        razorpay_order_id=rzp_order_id,
+        payment_id=payment_id,
+        amount_minor=order["amount_minor"],
+        currency=order["currency"]
+    )
+
     return {
         "status": "success",
         "verified": True,
@@ -818,6 +862,14 @@ def razorpay_webhook(
                     "razorpay_order_id": rzp_order_id,
                     "payment_id": payment_id
                 }
+            )
+            dispatch_recoverax_payment_event(
+                case_id=order["case_id"],
+                recovery_order_id=rec_id,
+                razorpay_order_id=rzp_order_id,
+                payment_id=payment_id,
+                amount_minor=order["amount_minor"],
+                currency=order["currency"]
             )
 
     return {"status": "ok", "event_id": event_id}
@@ -922,3 +974,32 @@ def reset_recovery_endpoint(
     verify_service_auth(x_service_token, authorization)
     reset_recovery_state()
     return {"status": "reset_complete"}
+
+@router.post("/api/recovery/demo-order")
+def create_demo_order():
+    """Generates a signed demo order for testing the checkout pay page."""
+    now = int(time.time())
+    case_num = secrets.randbelow(9000) + 1000
+    case_id = f"RX-2026-{case_num}"
+    jti = f"auth_demo_{secrets.token_hex(6)}"
+    payload = {
+        "aud": "razorpay_checkout_agent",
+        "jti": jti,
+        "case_id": case_id,
+        "attempt_no": 1,
+        "action": "create_recovery_order",
+        "amount_minor": 420000,
+        "currency": "INR",
+        "decision": "AUTO",
+        "approval_id": None,
+        "iat": now,
+        "exp": now + 600
+    }
+    token = jwt.encode(payload, AUTH_VERIFY_KEY, algorithm="HS256")
+    order = create_recovery_order(
+        req=None,
+        authorization=f"Bearer {token}",
+        x_service_token=SERVICE_TOKEN
+    )
+    return order
+

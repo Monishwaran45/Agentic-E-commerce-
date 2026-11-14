@@ -1,0 +1,574 @@
+import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
+import Header from './components/Header';
+import CatalogSidebar from './components/CatalogSidebar';
+import ChatPanel from './components/ChatPanel';
+import PurchaseSummaryPanel from './components/PurchaseSummaryPanel';
+
+const AuditLogPanel = lazy(() => import('./components/AuditLogPanel'));
+const CatalogPanel = lazy(() => import('./components/CatalogPanel'));
+const RecoveryPayPage = lazy(() => import('./components/RecoveryPayPage'));
+const VasoolConsole = lazy(() => import('./components/VasoolConsole'));
+
+function ViewLoader() {
+  return (
+    <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', color: 'var(--text-muted)' }}>
+        <div className="animate-spin" style={{ width: '28px', height: '28px', borderRadius: '50%', border: '3px solid var(--border-subtle)', borderTopColor: 'var(--accent-uber-blue)' }} />
+        <span style={{ fontSize: '13px' }}>Loading...</span>
+      </div>
+    </div>
+  );
+}
+import {
+  sendChatMessage,
+  checkBackendHealth,
+  getCatalog,
+  sendChatConsent,
+  getChatHistory,
+  deleteChatHistory,
+  getChatSessions,
+  getAuditLogs,
+  clearAuditLogs,
+} from './services/api';
+import catalogData from './data/catalog.json';
+
+function hydrateMessages(rawMessages) {
+  if (!Array.isArray(rawMessages)) return [];
+  return rawMessages.map((m, idx) => {
+    let products = Array.isArray(m.products) ? m.products : [];
+    let comparison = Array.isArray(m.comparison) ? m.comparison : [];
+
+    // Robust fallback: if legacy history record only preserved text without products array
+    if (products.length === 0 && comparison.length === 0 && (m.role === 'assistant' || m.sender === 'assistant')) {
+      const prevMsg = idx > 0 ? rawMessages[idx - 1] : null;
+      if (prevMsg && (prevMsg.role === 'user' || prevMsg.sender === 'user') && (prevMsg.content || prevMsg.text)) {
+        const queryText = (prevMsg.content || prevMsg.text || '').toLowerCase();
+        const words = queryText.match(/[a-z0-9]+/g)?.filter((t) => !['show', 'me', 'the', 'for', 'a', 'an', 'under', 'below', 'in', 'want', 'buy', 'get', 'some', 'products', 'item', 'items'].includes(t)) || [];
+        if (words.length > 0) {
+          const matched = catalogData.filter((item) => {
+            const searchable = `${item.name} ${item.category} ${(item.tags || []).join(' ')}`.toLowerCase();
+            return words.some((w) => searchable.includes(w));
+          }).slice(0, 6);
+          if (matched.length > 0) {
+            products = matched;
+          }
+        }
+      }
+    }
+
+    return {
+      id: m.id || idx + 10,
+      sender: m.role === 'user' || m.sender === 'user' ? 'user' : 'assistant',
+      text: m.content || m.text || '',
+      products,
+      comparison,
+      blocked: m.blocked || false,
+      agentActivity: m.agentActivity || (products.length > 0 ? `Searched catalog: Found ${products.length} matching products` : null),
+    };
+  });
+}
+
+function isCatalogBrowsePrompt(text) {
+  const normalized = text.toLowerCase();
+  const patterns = [
+    'what are the things',
+    "what's in",
+    'what is in',
+    'what do you have',
+    'show me everything',
+    'all products',
+    'browse catalog',
+    'browse catalogue',
+  ];
+  return (normalized.includes('catalog') || normalized.includes('catalogue')) && patterns.some((pattern) => normalized.includes(pattern));
+}
+
+export default function App() {
+  // Vasool Route Dispatching (Spec v0.2: /pay/:token and /console)
+  const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
+  if (currentPath.startsWith('/pay/')) {
+    const payToken = currentPath.split('/pay/')[1]?.split('/')[0] || '';
+    return (
+      <Suspense fallback={<ViewLoader />}>
+        <RecoveryPayPage payToken={payToken} />
+      </Suspense>
+    );
+  }
+  if (currentPath === '/console' || currentPath.startsWith('/console/')) {
+    return (
+      <Suspense fallback={<ViewLoader />}>
+        <VasoolConsole />
+      </Suspense>
+    );
+  }
+
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem('theme_pref') || 'dark';
+  });
+
+  const [backendConnected, setBackendConnected] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogProducts, setCatalogProducts] = useState([]);
+
+  // Dynamic active session ID & saved sessions list (persisted across reloads)
+  const [sessionId, setSessionId] = useState(() => {
+    return localStorage.getItem('active_session_id') || `sess_${Math.random().toString(36).substring(2, 9)}`;
+  });
+  const [sessions, setSessions] = useState([]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 768);
+
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [selectedQty, setSelectedQty] = useState(1);
+  const [activeStep, setActiveStep] = useState(1); // 1: SEARCH, 2: SELECT, 3: VERIFY, 4: ORDER, 5: PAY
+  const [mobileSummaryOpen, setMobileSummaryOpen] = useState(false);
+
+  // Privacy Consent & Chat History State
+  const [showConsentPrompt, setShowConsentPrompt] = useState(false);
+  const [consentGiven, setConsentGiven] = useState(() => {
+    return localStorage.getItem('chat_consent_pref') === 'true' ? true : null;
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme_pref', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (sessionId) {
+      localStorage.setItem('active_session_id', sessionId);
+    }
+  }, [sessionId]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
+  const DEFAULT_WELCOME_MESSAGE = {
+    id: 1,
+    sender: 'assistant',
+    text: `Hello! How can I help you today? Feel free to ask about products in our catalog or start a purchase.`,
+    products: [],
+  };
+
+  const [messages, setMessages] = useState([DEFAULT_WELCOME_MESSAGE]);
+
+  const [auditLogs, setAuditLogs] = useState([
+    {
+      id: 100,
+      timestamp: new Date().toISOString(),
+      action: 'system_init',
+      sku: 'N/A',
+      amount: 0,
+      reasoning: 'Guardrail Engine & Neon DB initialized. Spend cap limit active at ₹10,000.',
+      spend_cap_check: 'PASSED',
+      result: 'SUCCESS',
+    },
+  ]);
+
+  const refreshSessionsList = useCallback(async () => {
+    const res = await getChatSessions();
+    if (res && res.sessions) {
+      setSessions(res.sessions);
+    }
+  }, []);
+
+  const refreshAuditLogs = useCallback(async () => {
+    const logs = await getAuditLogs(sessionId);
+    if (logs && Array.isArray(logs)) {
+      setAuditLogs(logs);
+    }
+  }, [sessionId]);
+
+  const openCatalogPanel = useCallback(async () => {
+    setCatalogOpen(true);
+    if (catalogProducts.length === 0) {
+      const products = await getCatalog();
+      setCatalogProducts(products);
+    }
+  }, [catalogProducts.length]);
+
+  useEffect(() => {
+    async function verifyHealthAndLoad() {
+      const health = await checkBackendHealth();
+      setBackendConnected(health.online);
+
+      await refreshSessionsList();
+      await refreshAuditLogs();
+
+      const savedConsentPref = localStorage.getItem('chat_consent_pref');
+
+      // Check if stored chat history exists for active sessionId
+      const historyRes = await getChatHistory(sessionId);
+      if (historyRes && historyRes.messages && historyRes.messages.length > 0) {
+        const loaded = hydrateMessages(historyRes.messages);
+        setMessages(loaded);
+        setConsentGiven(true);
+        setShowConsentPrompt(false);
+      } else if (savedConsentPref === 'true') {
+        // Auto-enable consent for new sessions if user already granted global consent
+        await sendChatConsent(sessionId, true);
+        setConsentGiven(true);
+        setShowConsentPrompt(false);
+      }
+    }
+    verifyHealthAndLoad();
+  }, [sessionId, refreshSessionsList]);
+
+  // Handle switching to a past session from the sidebar
+  const handleSelectSession = async (sid) => {
+    if (sid === sessionId) return;
+    setSessionId(sid);
+    localStorage.setItem('active_session_id', sid);
+    setSelectedProduct(null);
+    setSelectedQty(1);
+    setActiveStep(1);
+
+    const historyRes = await getChatHistory(sid);
+    if (historyRes && historyRes.messages && historyRes.messages.length > 0) {
+      const loaded = hydrateMessages(historyRes.messages);
+      setMessages(loaded);
+      setConsentGiven(true);
+      setShowConsentPrompt(false);
+    } else {
+      setMessages([DEFAULT_WELCOME_MESSAGE]);
+    }
+  };
+
+  // Handle starting a fresh session (+ New Chat)
+  const handleNewChat = async () => {
+    const newId = `sess_${Math.random().toString(36).substring(2, 9)}`;
+    setSessionId(newId);
+    localStorage.setItem('active_session_id', newId);
+    setMessages([DEFAULT_WELCOME_MESSAGE]);
+    setSelectedProduct(null);
+    setSelectedQty(1);
+    setActiveStep(1);
+
+    const savedConsentPref = localStorage.getItem('chat_consent_pref');
+    if (savedConsentPref === 'true') {
+      await sendChatConsent(newId, true);
+      setConsentGiven(true);
+      setShowConsentPrompt(false);
+    } else {
+      setConsentGiven(null);
+      setShowConsentPrompt(false);
+    }
+  };
+
+  // Handle deleting a session
+  const handleDeleteSession = async (sid) => {
+    await deleteChatHistory(sid);
+    await refreshSessionsList();
+
+    if (sid === sessionId) {
+      handleNewChat();
+    }
+  };
+
+  // Handle user selecting a product card via "Buy Now" button
+  const handleSelectProduct = (product, initialQty = 1) => {
+    setSelectedProduct(product);
+    setSelectedQty(initialQty);
+    setActiveStep(2); // Step 2: Product Selected
+    setMobileSummaryOpen(true);
+
+    const selectMsg = {
+      id: Date.now(),
+      sender: 'assistant',
+      text: `${product.name} selected.`,
+      agentActivity: `Product selected: ${product.name}`,
+    };
+
+    setMessages((prev) => [...prev, selectMsg]);
+  };
+
+  const handleResetSelection = () => {
+    setSelectedProduct(null);
+    setSelectedQty(1);
+    setActiveStep(1);
+    setMobileSummaryOpen(false);
+  };
+
+  const handleSendMessage = async (userText) => {
+    const userMsg = {
+      id: Date.now(),
+      sender: 'user',
+      text: userText,
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    const lowerText = userText.toLowerCase().trim();
+
+    if (isCatalogBrowsePrompt(userText)) {
+      await openCatalogPanel();
+      setMessages((prev) => [...prev, {
+        id: Date.now() + 1,
+        sender: 'assistant',
+        text: "You can browse everything in the catalog panel on the left - or tell me what you're looking for and I'll help you find it.",
+        products: [],
+      }]);
+      return;
+    }
+
+    // Handle quantity update from chat if product is selected
+    if (selectedProduct) {
+      const qtyMatch = lowerText.match(/^(?:buy\s+|qty\s+|quantity\s+)?(\d+)$/i) || lowerText.match(/(?:buy|set|make\s+it)\s+(\d+)/i);
+      if (qtyMatch) {
+        const newQty = Math.max(1, Math.min(selectedProduct.stock, parseInt(qtyMatch[1], 10)));
+        setSelectedQty(newQty);
+        const qtyMsg = {
+          id: Date.now() + 1,
+          sender: 'assistant',
+          text: `Quantity updated to ${newQty}.`,
+        };
+        setMessages((prev) => [...prev, qtyMsg]);
+        return;
+      }
+    }
+
+    // Check for natural language selection e.g. "buy the second one"
+    if ((lowerText.includes('second') || lowerText.includes('first') || lowerText.includes('third') || lowerText.includes('buy the')) && messages.length > 0) {
+      const lastMsgWithProducts = [...messages].reverse().find((m) => m.products && m.products.length > 0);
+      if (lastMsgWithProducts) {
+        let index = 0;
+        if (lowerText.includes('second')) index = 1;
+        else if (lowerText.includes('third')) index = 2;
+
+        if (lastMsgWithProducts.products[index]) {
+          const item = lastMsgWithProducts.products[index];
+          let qty = 1;
+          const matchNum = lowerText.match(/(\d+)/);
+          if (matchNum) qty = Math.max(1, parseInt(matchNum[1]));
+
+          handleSelectProduct(item, qty);
+          return;
+        }
+      }
+    }
+
+    const res = await sendChatMessage(userText, { sessionId });
+    const responseData = res?.data;
+
+    if (res?.success && responseData) {
+      if (responseData.needs_consent && consentGiven === null) {
+        setShowConsentPrompt(true);
+      }
+
+      const returnedProducts = Array.isArray(responseData.products) ? responseData.products : [];
+      const comparisonProducts = Array.isArray(responseData.comparison) ? responseData.comparison : [];
+      const botMsg = {
+        id: Date.now() + 1,
+        sender: 'assistant',
+        text: typeof responseData.reply === 'string' && responseData.reply.trim()
+          ? responseData.reply
+          : "I'm having a little trouble processing that right now - mind trying again in a moment?",
+        products: returnedProducts,
+        comparison: comparisonProducts,
+        blocked: responseData.blocked || false,
+        error: responseData.type === 'error',
+        agentActivity: comparisonProducts.length > 0
+          ? `Compared ${comparisonProducts.length} catalog products`
+          : returnedProducts.length > 0
+          ? `Searched catalog: Found ${returnedProducts.length} matching products`
+          : responseData.blocked
+          ? `Guardrail enforcement blocked action`
+          : responseData.type === 'error'
+          ? 'Chat request needs a retry'
+          : null,
+      };
+
+      setMessages((prev) => [...prev, botMsg]);
+
+      if (returnedProducts.length > 0) {
+        setActiveStep(1); // Step 1: Product Searched
+      }
+
+      if (responseData.auditEntry) {
+        setAuditLogs((prev) => [responseData.auditEntry, ...prev]);
+        if (responseData.blocked) {
+          setAuditOpen(true);
+        }
+      }
+
+      // Refresh saved sessions list
+      refreshSessionsList();
+    } else {
+      setMessages((prev) => [...prev, {
+        id: Date.now() + 1,
+        sender: 'assistant',
+        text: "I'm having a little trouble processing that right now - mind trying again in a moment?",
+        products: [],
+        error: true,
+        agentActivity: 'Chat request needs a retry',
+      }]);
+    }
+  };
+
+  const handleConsentChoice = async (consent) => {
+    setShowConsentPrompt(false);
+    setConsentGiven(consent);
+    if (consent) {
+      localStorage.setItem('chat_consent_pref', 'true');
+    } else {
+      localStorage.setItem('chat_consent_pref', 'false');
+    }
+    await sendChatConsent(sessionId, consent);
+    refreshSessionsList();
+  };
+
+  const handleClearChatHistory = async () => {
+    await deleteChatHistory(sessionId);
+    localStorage.removeItem('chat_consent_pref');
+    setMessages([DEFAULT_WELCOME_MESSAGE]);
+    setConsentGiven(null);
+    setShowConsentPrompt(false);
+    refreshSessionsList();
+  };
+
+  const handleAuditLogged = (newEntry) => {
+    setAuditLogs((prev) => [newEntry, ...prev]);
+  };
+
+  const handleStockVerified = (stockData) => {
+    setActiveStep(3); // Step 3: Stock Verified
+    if (stockData?.auditEntry) {
+      setAuditLogs((prev) => [stockData.auditEntry, ...prev]);
+    }
+  };
+
+  const handleOrderCreated = (orderData) => {
+    setActiveStep(4); // Step 4: Order Created
+    if (orderData?.auditEntry) {
+      setAuditLogs((prev) => [orderData.auditEntry, ...prev]);
+    }
+  };
+
+  const handleOrderSuccess = (orderData) => {
+    setActiveStep(5); // Step 5: Payment Verified
+    if (orderData?.auditEntry) {
+      setAuditLogs((prev) => [orderData.auditEntry, ...prev]);
+    }
+  };
+
+  const handleClearLogs = async () => {
+    await clearAuditLogs();
+    const logs = await getAuditLogs(sessionId);
+    if (logs && Array.isArray(logs)) {
+      setAuditLogs(logs);
+    } else {
+      setAuditLogs([]);
+    }
+  };
+
+  const blockedCount = auditLogs.filter((l) => l.result === 'BLOCKED').length;
+
+  const currentSpend = selectedProduct ? (selectedProduct.price || 0) * selectedQty : 0;
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <Header
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        backendConnected={backendConnected}
+        spendCap={10000}
+        currentSpend={currentSpend}
+        auditOpen={auditOpen}
+        onToggleAudit={() => {
+          if (!auditOpen) {
+            refreshAuditLogs();
+          }
+          setAuditOpen(!auditOpen);
+        }}
+        catalogOpen={catalogOpen}
+        onToggleCatalog={() => {
+          setCatalogOpen(!catalogOpen);
+        }}
+        blockedCount={blockedCount}
+        onClearChatHistory={handleClearChatHistory}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+        mobileSummaryOpen={mobileSummaryOpen}
+        onToggleMobileSummary={() => setMobileSummaryOpen(!mobileSummaryOpen)}
+        hasSelectedItem={!!selectedProduct}
+      />
+
+      <div className="app-main-layout">
+        {/* Left Column: Interactive Product Catalog Sidebar */}
+        <CatalogSidebar
+          products={catalogProducts.length > 0 ? catalogProducts : catalogData}
+          selectedProduct={selectedProduct}
+          onSelectProduct={handleSelectProduct}
+          onAskAgent={handleSendMessage}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+          onOpenFullCatalog={() => setCatalogOpen(true)}
+          onNewChat={handleNewChat}
+        />
+
+        {/* Center Column: Conversation & Product Discovery */}
+        <div className="chat-discovery-column">
+          <ChatPanel
+            messages={messages}
+            activeStep={activeStep}
+            onSendMessage={handleSendMessage}
+            onSelectProduct={handleSelectProduct}
+            onAuditLogged={handleAuditLogged}
+            showConsentPrompt={showConsentPrompt}
+            onConsentChoice={handleConsentChoice}
+          />
+        </div>
+
+        {/* Right Column: Checkout Sheet Panel (Slides in when item is selected) */}
+        <div className={`purchase-summary-column ${selectedProduct ? 'has-selected-item' : ''} ${mobileSummaryOpen ? 'mobile-open' : ''}`}>
+          {selectedProduct && (
+            <PurchaseSummaryPanel
+              key={selectedProduct?.sku || 'empty-purchase'}
+              selectedProduct={selectedProduct}
+              quantity={selectedQty}
+              onQtyChange={setSelectedQty}
+              onResetSelection={handleResetSelection}
+              onStockVerified={handleStockVerified}
+              onOrderCreated={handleOrderCreated}
+              onOrderSuccess={handleOrderSuccess}
+              sessionId={sessionId}
+            />
+          )}
+        </div>
+
+        {/* Mobile Backdrop Overlays */}
+        {!sidebarCollapsed && (
+          <div className="mobile-overlay-backdrop sidebar-backdrop" onClick={() => setSidebarCollapsed(true)} />
+        )}
+        {mobileSummaryOpen && (
+          <div className="mobile-overlay-backdrop summary-backdrop" onClick={() => setMobileSummaryOpen(false)} />
+        )}
+      </div>
+
+      <Suspense fallback={null}>
+        {auditOpen && (
+          <AuditLogPanel
+            open={auditOpen}
+            onClose={() => setAuditOpen(false)}
+            auditLogs={auditLogs}
+            onClearLogs={handleClearLogs}
+            spendCap={10000}
+          />
+        )}
+
+        {catalogOpen && (
+          <CatalogPanel
+            open={catalogOpen}
+            onClose={() => setCatalogOpen(false)}
+            products={catalogProducts.length > 0 ? catalogProducts : catalogData}
+            onSelectProduct={handleSelectProduct}
+            onAskAgent={(prompt) => {
+              handleSendMessage(prompt);
+              setCatalogOpen(false);
+            }}
+          />
+        )}
+      </Suspense>
+    </div>
+  );
+}

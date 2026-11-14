@@ -1,0 +1,1803 @@
+from __future__ import annotations
+import os
+import json
+import time
+import hmac
+import hashlib
+import random
+import re
+from typing import List, Optional, Dict, Any
+from fastapi import FastAPI, HTTPException, Header
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+
+try:
+    import razorpay
+except ImportError:
+    razorpay = None
+
+from sqlalchemy import Column, Integer, String, Numeric, Boolean, DateTime, func, create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+load_dotenv()
+
+def safe_log(msg: Any):
+    try:
+        print(msg, flush=True)
+    except Exception:
+        try:
+            print(str(msg).encode('ascii', 'replace').decode('ascii'), flush=True)
+        except Exception:
+            pass
+
+
+# Configuration
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+SPEND_CAP = float(os.getenv("MERCHANT_SPEND_CAP", "10000"))
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
+MODEL_NAME = "openai/gpt-oss-120b"
+
+# Groq LLM client
+groq_client = Groq(api_key=GROQ_API_KEY) if (Groq and GROQ_API_KEY) else None
+
+# Razorpay client
+rzp_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)) if (razorpay and RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET) else None
+
+# Neon Postgres Database ORM setup
+Base = declarative_base()
+
+class AuditLogModel(Base):
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    action = Column(String, nullable=False)
+    sku = Column(String, nullable=True)
+    amount = Column(Numeric, nullable=True)
+    reasoning = Column(String, nullable=False)
+    spend_cap_check = Column(String, nullable=False)
+    result = Column(String, nullable=False)
+    session_id = Column(String, nullable=True)
+    is_attack = Column(Boolean, default=False)
+
+class OrderModel(Base):
+    __tablename__ = "orders"
+
+    id = Column(String, primary_key=True)
+    session_id = Column(String, nullable=True)
+    sku = Column(String, nullable=False)
+    product_name = Column(String, nullable=False)
+    category = Column(String, nullable=True)
+    quantity = Column(Integer, nullable=False)
+    unit_price = Column(Numeric, nullable=False)
+    subtotal = Column(Numeric, nullable=False)
+    shipping_fee = Column(Numeric, default=0)
+    total_amount = Column(Numeric, nullable=False)
+    status = Column(String, default="PENDING_PAYMENT")
+    customer_name = Column(String, nullable=True)
+    customer_phone = Column(String, nullable=True)
+    address_line1 = Column(String, nullable=True)
+    address_line2 = Column(String, nullable=True)
+    city = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    pin_code = Column(String, nullable=True)
+    razorpay_order_id = Column(String, nullable=True)
+    razorpay_payment_id = Column(String, nullable=True)
+    razorpay_signature = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class ChatHistoryModel(Base):
+    __tablename__ = "chat_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, index=True, nullable=False)
+    role = Column(String, nullable=False)
+    content = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    consent_given = Column(Boolean, default=False, nullable=False)
+
+db_engine = None
+SessionLocal = None
+
+if DATABASE_URL:
+    try:
+        db_engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+        Base.metadata.create_all(db_engine)
+        SessionLocal = sessionmaker(bind=db_engine)
+        safe_log("Connected to Neon Postgres Database successfully.")
+    except Exception as err:
+        safe_log(f"Neon Postgres DB connection note: {err}")
+
+app = FastAPI(
+    title="Razorpay Checkout Agent Service",
+    description="Conversational Checkout Agent with Verified Guardrail Engine",
+    version="1.0.0"
+)
+
+cors_origins_raw = os.getenv("CORS_ORIGINS", "*")
+# Clean up potential typo if someone typed 'CORS_ORIGINS=https://...' in the value box
+cors_origins_clean = cors_origins_raw.replace("CORS_ORIGINS=", "").strip()
+allowed_origins = [o.strip() for o in cors_origins_clean.split(",") if o.strip()] or ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"] if "*" in allowed_origins else allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Vasool Recovery Router (Mounted per Spec v0.2)
+try:
+    from .recovery import router as recovery_router
+    app.include_router(recovery_router)
+except ImportError:
+    from recovery import router as recovery_router
+    app.include_router(recovery_router)
+
+# Load catalog data
+CATALOG_FILE = os.path.join(os.path.dirname(__file__), "..", "frontend", "src", "data", "catalog.json")
+
+def load_catalog():
+    if os.path.exists(CATALOG_FILE):
+        with open(CATALOG_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+catalog = load_catalog()
+
+# Audit log in-memory cache
+audit_logs: List[Dict[str, Any]] = []
+
+# In-memory orders cache
+orders_cache: Dict[str, Dict[str, Any]] = {}
+
+# Session conversation histories for multi-turn chat
+session_histories: Dict[str, list] = {}
+
+# Consent tracking per session (None = undecided, True = consented, False = declined)
+session_consent_status: Dict[str, Optional[bool]] = {}
+
+# Rate limiting: max order attempts per session
+MAX_ORDER_ATTEMPTS_PER_SESSION = 5
+session_order_counts: Dict[str, int] = {}
+MAX_IN_MEMORY_SESSIONS = 500
+
+
+def trim_in_memory_caches():
+    """Prevent memory leaks by capping maximum stored in-memory sessions and logs."""
+    if len(session_histories) > MAX_IN_MEMORY_SESSIONS:
+        for k in list(session_histories.keys())[:-MAX_IN_MEMORY_SESSIONS]:
+            session_histories.pop(k, None)
+    if len(orders_cache) > MAX_IN_MEMORY_SESSIONS:
+        for k in list(orders_cache.keys())[:-MAX_IN_MEMORY_SESSIONS]:
+            orders_cache.pop(k, None)
+    if len(session_consent_status) > MAX_IN_MEMORY_SESSIONS:
+        for k in list(session_consent_status.keys())[:-MAX_IN_MEMORY_SESSIONS]:
+            session_consent_status.pop(k, None)
+    if len(session_order_counts) > MAX_IN_MEMORY_SESSIONS:
+        for k in list(session_order_counts.keys())[:-MAX_IN_MEMORY_SESSIONS]:
+            session_order_counts.pop(k, None)
+    if len(audit_logs) > 1000:
+        del audit_logs[1000:]
+
+
+def get_session_consent(session_id: str) -> Optional[bool]:
+    """Check if session consent has been given, declined, or is default True."""
+    if session_id in session_consent_status:
+        return session_consent_status[session_id]
+
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            record = db.query(ChatHistoryModel).filter(ChatHistoryModel.session_id == session_id).order_by(ChatHistoryModel.id.desc()).first()
+            db.close()
+            if record:
+                session_consent_status[session_id] = record.consent_given
+                return record.consent_given
+        except Exception as e:
+            safe_log(f"Error checking session consent: {e}")
+
+    # Default to True so chats save automatically
+    return True
+
+
+def persist_chat_message(session_id: str, role: str, content: Optional[str]):
+    """Store chat message in Neon Postgres DB unless consent was explicitly declined."""
+    consent = get_session_consent(session_id)
+    if consent is False:
+        return  # Privacy guard: Do NOT write message content if consent was explicitly declined
+
+    if not content:
+        return
+
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            rec = ChatHistoryModel(
+                session_id=session_id,
+                role=role,
+                content=str(content),
+                consent_given=True
+            )
+            db.add(rec)
+            db.commit()
+            db.close()
+        except Exception as e:
+            safe_log(f"Error persisting chat history message: {e}")
+
+
+
+def log_audit_entry(
+    action: str,
+    sku: str,
+    amount: float,
+    reasoning: str,
+    cap_check: str,
+    result: str,
+    session_id: str = "session_default",
+    is_attack: bool = False
+) -> Dict[str, Any]:
+    entry = {
+        "id": int(time.time() * 1000),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "action": action,
+        "sku": sku,
+        "amount": amount,
+        "reasoning": reasoning,
+        "spend_cap_check": cap_check,
+        "result": result,
+        "session_id": session_id,
+        "is_attack": is_attack or (result == "BLOCKED")
+    }
+    audit_logs.insert(0, entry)
+    trim_in_memory_caches()
+
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            record = AuditLogModel(
+                action=action,
+                sku=sku if sku and sku != "N/A" else None,
+                amount=amount if amount > 0 else None,
+                reasoning=reasoning,
+                spend_cap_check=cap_check,
+                result=result,
+                session_id=session_id,
+                is_attack=is_attack or (result == "BLOCKED")
+            )
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+            entry["id"] = record.id
+            if record.timestamp:
+                entry["timestamp"] = record.timestamp.isoformat()
+            db.close()
+        except Exception as e:
+            safe_log(f"Error persisting log to Neon DB: {e}")
+
+    return entry
+
+
+def verify_razorpay_signature(razorpay_order_id: str, razorpay_payment_id: str, razorpay_signature: str) -> bool:
+    """Server-side HMAC SHA256 payment signature verification."""
+    if not RAZORPAY_KEY_SECRET:
+        return True  # Fallback in simulation mode
+    try:
+        msg = f"{razorpay_order_id}|{razorpay_payment_id}".encode("utf-8")
+        generated = hmac.new(RAZORPAY_KEY_SECRET.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(generated, razorpay_signature)
+    except Exception as err:
+        safe_log(f"Signature verification error: {err}")
+        return False
+
+
+def clean_agent_reply(text: str) -> str:
+    """Safety filter to strip ALL markdown formatting and product data from agent text.
+
+    The agent must ONLY return short conversational sentences.
+    Product data is delivered via structured JSON, never via text.
+    This function is a safety net in case the LLM still generates Markdown.
+    """
+    if not text:
+        return ""
+    lines = text.splitlines()
+    clean_lines = []
+    in_table = False
+    for line in lines:
+        stripped = line.strip()
+        # Skip markdown table rows (header, separator, data)
+        if "|" in line and ("---" in line or "SKU" in line or "Price" in line or "Stock" in line or "Name" in line):
+            in_table = True
+            continue
+        if in_table and "|" in line:
+            continue
+        if in_table and "|" not in line:
+            in_table = False
+        # Skip bulleted product listings
+        if stripped.startswith("- ") and ("SKU" in line or "\u20b9" in line or "price" in line.lower()):
+            continue
+        if stripped.startswith("- ") and ("SKU" in line or "\u20b9" in line):
+            continue
+        # Skip lines that are just product details
+        if re.match(r'^\*\*[A-Z]{2}\d{3}\*\*', stripped):
+            continue
+        if re.match(r'^SKU:\s*[A-Z]{2}\d{3}', stripped):
+            continue
+        clean_lines.append(line)
+
+    res = "\n".join(clean_lines).strip()
+
+    # Strip inline markdown formatting
+    res = re.sub(r'\*\*(.+?)\*\*', r'\1', res)  # **bold** -> bold
+    res = re.sub(r'`([^`]+)`', r'\1', res)       # `code` -> code
+    res = re.sub(r'\u20b9[\d,]+', '', res)             # Remove price mentions
+    res = re.sub(r'\bSKU[:\s]+[A-Z]{2}\d{3}\b', '', res)  # Remove SKU references
+    res = re.sub(r'\bsess_[a-zA-Z0-9_-]+\b', '[REDACTED]', res) # Strip raw session tokens
+    res = re.sub(r'\bsession[_-]?id[:=\s]+[a-zA-Z0-9_-]+\b', '', res, flags=re.IGNORECASE)
+    res = re.sub(r'\s{2,}', ' ', res).strip()     # Collapse whitespace
+
+    return res if res else "Here are the matching products from our catalog."
+
+
+# ---------- Guardrail Engine ----------
+
+def guardrail_create_razorpay_order(sku: str, quantity: int, reasoning: str, session_id: str):
+    """Code-enforced guardrail that validates every order before calling Razorpay."""
+
+    count = session_order_counts.get(session_id, 0)
+    if count >= MAX_ORDER_ATTEMPTS_PER_SESSION:
+        entry = log_audit_entry("create_order", sku, 0, "Rate limit exceeded for session.", "BLOCKED (Rate Limit)", "BLOCKED", session_id=session_id, is_attack=True)
+        return {"success": False, "blocked": True, "reason": "Too many order attempts in this session.", "auditEntry": entry}
+
+    item = next((i for i in catalog if i["sku"] == sku), None)
+    if not item:
+        entry = log_audit_entry("create_order", sku, 0, f"SKU '{sku}' not in merchant catalog.", "REJECTED (Invalid SKU)", "BLOCKED", session_id=session_id, is_attack=True)
+        return {"success": False, "blocked": True, "reason": f"SKU {sku} does not exist.", "auditEntry": entry}
+
+    if item["stock"] < quantity:
+        entry = log_audit_entry("create_order", sku, item["price"] * quantity, f"Out of stock ({item['stock']} left, requested {quantity}).", "N/A", "FAILED (Out of Stock)", session_id=session_id)
+        return {"success": False, "blocked": False, "reason": f"Product out of stock. Only {item['stock']} available.", "auditEntry": entry}
+
+    total_amount = float(item["price"]) * quantity
+
+    if total_amount > SPEND_CAP:
+        entry = log_audit_entry("create_order", sku, total_amount, f"Amount \u20b9{total_amount} exceeds cap \u20b9{SPEND_CAP}.", f"FAILED (\u20b9{total_amount} > \u20b9{SPEND_CAP})", "BLOCKED", session_id=session_id, is_attack=True)
+        return {"success": False, "blocked": True, "reason": f"Order amount \u20b9{total_amount:,.0f} exceeds merchant spend cap of \u20b9{SPEND_CAP:,.0f}.", "auditEntry": entry}
+
+    session_order_counts[session_id] = count + 1
+    order_id = f"ORD-{random.randint(100000, 999999)}"
+    rzp_order_id = f"demo_order_{int(time.time())}"
+    razorpay_order_created = False
+
+    if rzp_client:
+        try:
+            rzp_order = rzp_client.order.create({
+                "amount": int(total_amount * 100),
+                "currency": "INR",
+                "receipt": order_id,
+                "notes": {"sku": sku, "reasoning": reasoning[:200]},
+            })
+            rzp_order_id = rzp_order["id"]
+            razorpay_order_created = True
+        except Exception as e:
+            safe_log(f"Razorpay order create note: {e}")
+
+    entry = log_audit_entry(
+        "create_order", sku, total_amount,
+        f"Order created for {item['name']} (SKU: {sku}, Qty: {quantity}). {reasoning}",
+        "PASSED", "SUCCESS",
+        session_id=session_id
+    )
+
+    return {
+        "success": True,
+        "order_id": order_id,
+        "razorpay_order_id": rzp_order_id,
+        "amount": total_amount,
+        "currency": "INR",
+        "sku": sku,
+        "product_name": item["name"],
+        "quantity": quantity,
+        "auditEntry": entry,
+    }
+
+
+# ---------- LLM Tool Definitions ----------
+
+TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_catalog",
+            "description": "Search the product catalog by keyword, category, tag, or price ceiling. Returns matching products.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search keyword (e.g. 'running shoes', 'watch', 't-shirt')"},
+                    "max_price": {"type": "number", "description": "Optional maximum price filter in INR"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compare_products",
+            "description": "Compare specific catalog products by SKU. Returns canonical product details in a structured array.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skus": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Two or more product SKUs from the canonical catalog.",
+                    },
+                },
+                "required": ["skus"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_order",
+            "description": "Create a Razorpay order for a product SKU after customer confirms. Enforced by guardrail engine.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sku": {"type": "string", "description": "The product SKU to order (must exist in catalog)"},
+                    "quantity": {"type": "integer", "description": "Number of units to order", "default": 1},
+                    "reasoning": {"type": "string", "description": "Natural-language reason for creating this order"},
+                },
+                "required": ["sku", "reasoning"],
+            },
+        },
+    },
+]
+
+SYSTEM_PROMPT = f"""You are a helpful AI shopping assistant for an online store with a {len(catalog)}-SKU catalog spanning Footwear, Apparel, Electronics, Bags, Accessories, Home, and Fitness.
+
+PRODUCT MATCHING & CLARIFYING QUESTION RULES:
+
+1. Under-Specified vs. Specific-Enough Requests:
+   - If the user's query is vague or under-specified (e.g. "show me shoes", "I want a shirt", "show me stuff"), ask ONE short clarifying question before calling search_catalog. Do NOT call search_catalog on vague queries without asking a clarifying question first.
+   - Specific-Enough Criteria per Category (if met, SKIP clarifying question and call search_catalog immediately):
+     * Footwear: Specifying type of use (e.g. running, casual, sneakers, formal, loafers, boots, heels, sandals, training) OR budget (e.g. under Rs 3000).
+     * Apparel: Specifying item type (e.g. hoodie, t-shirt, jeans, dress, kurta, blazer, jacket, shorts, joggers, sweater, saree) OR color/budget.
+     * Electronics: Specifying device type (e.g. smart watch, earbuds, headphones, laptop, camera, monitor, power bank, tablet, charger, keyboard) OR budget.
+     * Bags / Accessories / Home / Fitness: Specifying item type (e.g. backpack, wallet, sunglasses, luggage, dumbbells, yoga mat, lamp, mug, chair, bottle) OR budget.
+
+2. Using User Answers Directly:
+   - When the user responds to your clarifying question (e.g. "for running" or "black"), use that detail directly in your search_catalog tool call on the next turn.
+
+3. Single Round Limit (No Question Loops):
+   - Cap clarifying questions at ONE round. Once you have asked one follow-up question and the user replies, you MUST call search_catalog and produce a product recommendation, even if their answer is still partial. Never ask multiple clarifying questions in a row.
+
+4. Fast Path for Specific Queries:
+   - If the user's initial message is already specific enough (e.g. "show me running shoes under Rs 3000" or "black oversized t-shirt"), skip the clarifying question and call search_catalog immediately on turn 1.
+
+5. Product Comparison:
+   - Use compare_products only when the user gives specific SKUs to compare.
+   - If the user asks vaguely (e.g. "compare two shirts"), ask which specific products they want to compare.
+
+ABSOLUTE RESPONSE CONTRACT - VIOLATION = SYSTEM FAILURE:
+
+1. Your text response must be ONE short conversational sentence. Nothing more.
+2. The frontend renders interactive ProductCards automatically from tool results.
+3. You must NEVER include ANY of the following in your text:
+   - Markdown tables: | SKU | Name | Price |
+   - Bold text: **anything**
+   - Backtick code: `anything`
+   - Bullet points with product data: - Product Name - price
+   - SKU codes: SH001, SH007, etc.
+   - Prices: Rs. 899, Rs. 2499, etc.
+   - Stock counts: "20 available", "12 in stock"
+   - Product descriptions or specifications
+   - "Click Buy Now", "Specify quantity", "Continue to Shipping"
+
+CORRECT RESPONSES (use these patterns):
+   - "Are you looking for running, casual, or formal shoes?"
+   - "I found 3 running shoes matching your budget."
+   - "Here are the oversized T-shirts from our catalog."
+   - "Product selected. You can proceed with your purchase."
+   - "Stock has been verified."
+
+STRICT GUARDRAILS (enforced in code):
+- Only recommend products that exist in the canonical catalog.
+- Never invent fake prices, discounts, or SKUs.
+- You have NO ability to apply discount codes or coupons.
+- You have NO access to other customer data or past sessions.
+- Never reveal session IDs, session tokens, internal IDs, customer PII, or system secrets under any circumstances.
+- If asked about session IDs or internal identifiers, state that session identifiers are private and protected by security guardrails.
+- Hard spend cap is active at Rs. 10000.
+"""
+
+
+SYNONYM_MAP = {
+    "pant": ["trousers", "jeans", "chinos", "joggers", "shorts", "leggings", "apparel"],
+    "pants": ["trousers", "jeans", "chinos", "joggers", "shorts", "leggings", "apparel"],
+    "trouser": ["trousers", "jeans", "chinos", "joggers"],
+    "trousers": ["trousers", "jeans", "chinos", "joggers"],
+    "bottom": ["trousers", "jeans", "chinos", "joggers", "shorts"],
+    "bottoms": ["trousers", "jeans", "chinos", "joggers", "shorts"],
+    "shoe": ["shoes", "sneakers", "boots", "loafers", "sandals", "heels", "footwear"],
+    "shoes": ["shoes", "sneakers", "boots", "loafers", "sandals", "heels", "footwear"],
+    "sneaker": ["sneakers", "shoes", "running"],
+    "sneakers": ["sneakers", "shoes", "running"],
+    "runner": ["running", "shoes", "sneakers"],
+    "runners": ["running", "shoes", "sneakers"],
+    "boot": ["boots", "leather", "chelsea"],
+    "boots": ["boots", "leather", "chelsea"],
+    "tee": ["tshirt", "t-shirt", "cotton"],
+    "tees": ["tshirt", "t-shirt", "cotton"],
+    "t-shirt": ["tshirt", "t-shirt", "tee"],
+    "tshirt": ["tshirt", "t-shirt", "tee"],
+    "shirt": ["shirt", "tshirt", "t-shirt", "polo", "linen", "top"],
+    "shirts": ["shirt", "tshirt", "t-shirt", "polo", "linen", "top"],
+    "top": ["tshirt", "shirt", "hoodie", "sweater", "blazer", "dress", "kurta"],
+    "tops": ["tshirt", "shirt", "hoodie", "sweater", "blazer", "dress", "kurta"],
+    "hoodie": ["hoodie", "sweatshirt", "jacket", "apparel"],
+    "hoodies": ["hoodie", "sweatshirt", "jacket", "apparel"],
+    "jacket": ["jacket", "bomber", "blazer", "outerwear"],
+    "jackets": ["jacket", "bomber", "blazer", "outerwear"],
+    "earbud": ["earbuds", "earphones", "audio", "wireless", "headphones"],
+    "earbuds": ["earbuds", "earphones", "audio", "wireless", "headphones"],
+    "earphone": ["earbuds", "earphones", "audio", "headphones"],
+    "earphones": ["earbuds", "earphones", "audio", "headphones"],
+    "headphone": ["headphones", "audio", "headset", "wireless", "anc"],
+    "headphones": ["headphones", "audio", "headset", "wireless", "anc"],
+    "watch": ["smartwatch", "watch", "wearable", "chronograph", "quartz"],
+    "watches": ["smartwatch", "watch", "wearable", "chronograph", "quartz"],
+    "smartwatch": ["smartwatch", "watch", "wearable", "fitness"],
+    "smartwatches": ["smartwatch", "watch", "wearable", "fitness"],
+    "bag": ["backpack", "bag", "duffle", "crossbody", "wallet"],
+    "bags": ["backpack", "bag", "duffle", "crossbody", "wallet"],
+    "backpack": ["backpack", "bag", "laptop", "travel"],
+    "backpacks": ["backpack", "bag", "laptop", "travel"],
+    "wallet": ["wallet", "cardholder", "leather", "card"],
+    "wallets": ["wallet", "cardholder", "leather", "card"],
+    "sunglass": ["sunglasses", "eyewear", "aviator", "polarized"],
+    "sunglasses": ["sunglasses", "eyewear", "aviator", "polarized"],
+    "keyboard": ["keyboard", "gaming", "rgb", "electronics"],
+    "keyboards": ["keyboard", "gaming", "rgb", "electronics"],
+    "mouse": ["mouse", "mice", "ergonomic", "gaming"],
+    "speaker": ["speaker", "audio", "bluetooth", "sound"],
+    "speakers": ["speaker", "audio", "bluetooth", "sound"],
+    "charger": ["charger", "gan", "fast charging", "power bank"],
+    "chargers": ["charger", "gan", "fast charging", "power bank"],
+    "mat": ["yoga", "mat", "fitness", "workout"],
+    "mats": ["yoga", "mat", "fitness", "workout"],
+    "dumbbell": ["dumbbell", "weights", "gym", "fitness"],
+    "dumbbells": ["dumbbell", "weights", "gym", "fitness"],
+    "lamp": ["lamp", "light", "desk", "lighting"],
+    "lamps": ["lamp", "light", "desk", "lighting"],
+    "mug": ["mug", "coffee", "ceramic", "flask"],
+    "mugs": ["mug", "coffee", "ceramic", "flask"],
+    "bottle": ["bottle", "flask", "shaker", "water"],
+    "bottles": ["bottle", "flask", "shaker", "water"],
+    "planner": ["planner", "journal", "notebook", "stationery"],
+    "notebook": ["notebook", "journal", "diary", "stationery"],
+    "pen": ["pen", "pens", "fountain pen", "stationery"],
+    "serum": ["serum", "skincare", "beauty", "face"],
+    "oil": ["beard oil", "oil", "grooming", "skincare"],
+}
+
+
+def search_catalog_items(query: str, max_price: Optional[float] = None) -> List[Dict[str, Any]]:
+    query_clean = query.lower().strip()
+
+    # Extract price constraint if query mentions "under X", "below X", "less than X"
+    if max_price is None:
+        price_match = re.search(r'(?:under|below|less\s+than|within|budget\s+of|max)\s+(?:rs\.?|inr|₹)?\s*(\d+)', query_clean)
+        if price_match:
+            try:
+                max_price = float(price_match.group(1))
+            except ValueError:
+                pass
+
+    words = [w for w in re.findall(r'\b\w+\b', query_clean) if w not in [
+        "the", "for", "some", "under", "below", "less", "than", "with", "show",
+        "find", "want", "buy", "get", "an", "a", "i", "me", "products", "item",
+        "items", "like", "to", "in", "of", "and", "or", "please", "can", "you",
+        "rs", "inr", "rupees"
+    ]]
+
+    search_keywords = set(words)
+    for w in words:
+        if w in SYNONYM_MAP:
+            search_keywords.update(SYNONYM_MAP[w])
+        elif w.endswith("s") and w[:-1] in SYNONYM_MAP:
+            search_keywords.update(SYNONYM_MAP[w[:-1]])
+
+    scored_items = []
+    for item in catalog:
+        item_name = item["name"].lower()
+        item_cat = item.get("category", "").lower()
+        item_tags = [t.lower() for t in item.get("tags", [])]
+        item_sku = item.get("sku", "").lower()
+
+        name_words = set(re.findall(r'\b\w+\b', item_name))
+        cat_words = set(re.findall(r'\b\w+\b', item_cat))
+        tag_words = set(item_tags)
+
+        # Calculate relevance score
+        score = 0
+        if item_sku in words or item_sku == query_clean:
+            score += 100
+
+        for kw in search_keywords:
+            if kw in name_words:
+                score += 10
+            elif kw in item_name:
+                score += 5
+            if kw in cat_words:
+                score += 8
+            elif kw in item_cat:
+                score += 4
+            if kw in tag_words:
+                score += 6
+
+        if score > 0:
+            if max_price is None or item["price"] <= max_price:
+                scored_items.append((score, item))
+
+    # Sort descending by relevance score, then price
+    scored_items.sort(key=lambda pair: pair[0], reverse=True)
+    return [item for _, item in scored_items]
+
+
+def available_category_suggestions(limit: int = 3) -> str:
+    categories = []
+    seen = set()
+    for item in catalog:
+        category = item.get("category")
+        if category and category not in seen:
+            categories.append(category)
+            seen.add(category)
+        if len(categories) >= limit:
+            break
+    return ", ".join(categories) if categories else "a few other categories"
+
+
+def search_reply(query: str, products: List[Dict[str, Any]]) -> str:
+    count = len(products)
+    if count == 0:
+        suggestions = available_category_suggestions()
+        return f"I couldn't find that in our catalog - here's what we do have: {suggestions}. Want to see one of those?"
+    return f"I found {count} product{'s' if count != 1 else ''} matching your search."
+
+
+def catalog_browse_reply() -> str:
+    return "You can browse everything in the catalog panel on the left - or tell me what you're looking for and I'll help you find it."
+
+
+def is_catalog_browse_request(message: str) -> bool:
+    text = message.lower()
+    browse_patterns = [
+        "what are the things",
+        "what is in",
+        "what's in",
+        "what do you have",
+        "show me everything",
+        "all products",
+        "browse catalog",
+        "browse catalogue",
+    ]
+    return ("catalog" in text or "catalogue" in text) and any(pattern in text for pattern in browse_patterns)
+
+
+def extract_skus(message: str) -> List[str]:
+    seen = set()
+    skus = []
+    for sku in re.findall(r'\bSH\d{3,6}\b', message.upper()):
+        if sku not in seen:
+            skus.append(sku)
+            seen.add(sku)
+    return skus
+
+
+def requested_compare_count(message: str) -> int:
+    text = message.lower()
+    if re.search(r'\b3\b|\bthree\b', text):
+        return 3
+    return 2
+
+
+def compare_products_by_sku(skus: List[str]) -> List[Dict[str, Any]]:
+    requested = [sku.upper() for sku in skus]
+    products = []
+    for sku in requested:
+        item = next((catalog_item for catalog_item in catalog if catalog_item["sku"] == sku), None)
+        if item:
+            products.append(item)
+    return products
+
+
+def ambiguous_compare_response(req: ChatRequest, needs_consent: bool):
+    text = req.message.lower()
+    if "compare" not in text:
+        return None
+
+    skus = extract_skus(req.message)
+    if len(skus) >= 2:
+        products = compare_products_by_sku(skus)
+        reply = f"Here are {len(products)} products side by side for comparison."
+        return {
+            "type": "comparison",
+            "reply": reply,
+            "products": [],
+            "comparison": products,
+            "auditEntry": None,
+            "needs_consent": needs_consent,
+        }
+
+    compare_query = re.sub(r'\b(compare|two|three|2|3|products?|items?|things?|please|me|the|a|an)\b', ' ', text)
+    compare_query = re.sub(r'\s+', ' ', compare_query).strip() or req.message
+    matches = search_catalog_items(compare_query)
+    count = requested_compare_count(req.message)
+
+    history = session_histories.get(req.session_id or "session_default", [])
+    already_asked = any(
+        isinstance(m, dict)
+        and m.get("role") == "assistant"
+        and "which" in m.get("content", "").lower()
+        and "compare" in m.get("content", "").lower()
+        for m in history
+    )
+
+    if len(matches) > count and not already_asked:
+        options = matches[:6]
+        reply = f"I found several {compare_query} options. Which {count} would you like to compare?"
+        return {
+            "type": "text",
+            "reply": reply,
+            "products": options,
+            "comparison": [],
+            "auditEntry": None,
+            "needs_consent": needs_consent,
+        }
+
+    products = matches[:count]
+    if products:
+        return {
+            "type": "comparison",
+            "reply": f"Here are {len(products)} products side by side for comparison.",
+            "products": [],
+            "comparison": products,
+            "auditEntry": None,
+            "needs_consent": needs_consent,
+        }
+
+    return {
+        "type": "text",
+        "reply": search_reply(compare_query, []),
+        "products": [],
+        "comparison": [],
+        "auditEntry": None,
+        "needs_consent": needs_consent,
+    }
+
+
+def execute_tool_call(tool_name: str, tool_args: dict, session_id: str):
+    """Execute a tool call from the LLM and return structured JSON."""
+    if tool_name == "search_catalog":
+        query = tool_args.get("query", "").lower()
+        max_price = tool_args.get("max_price")
+
+        matched = search_catalog_items(query, max_price)
+
+        entry = None
+        if matched:
+            entry = log_audit_entry("catalog_lookup", matched[0]["sku"], matched[0]["price"],
+                                     f"Catalog search for '{query}'. Found {len(matched)} result(s).", "PASSED", "SUCCESS", session_id=session_id)
+        products = matched[:6]
+        return {"products": products, "count": len(products), "auditEntry": entry, "query": query}
+
+    elif tool_name == "compare_products":
+        products = compare_products_by_sku(tool_args.get("skus", []))
+        return {"comparison": products, "count": len(products), "auditEntry": None}
+
+    elif tool_name == "create_order":
+        sku = tool_args.get("sku", "")
+        quantity = tool_args.get("quantity", 1)
+        reasoning = tool_args.get("reasoning", "No reasoning provided")
+        return guardrail_create_razorpay_order(sku, quantity, reasoning, session_id)
+
+    return {"error": f"Unknown tool: {tool_name}"}
+
+
+# ---------- API Endpoints & Models ----------
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2_000)
+    session_id: Optional[str] = Field(default="session_default", min_length=1, max_length=100)
+    spend_cap: Optional[float] = Field(default=10000.0, ge=0, le=SPEND_CAP)
+
+class CreateOrderRequest(BaseModel):
+    sku: str = Field(min_length=1, max_length=32)
+    quantity: int = Field(default=1)
+    customer_name: str = Field(min_length=1, max_length=100)
+    customer_phone: str = Field(min_length=10, max_length=15)
+    address_line1: str = Field(min_length=1, max_length=200)
+    address_line2: Optional[str] = Field(default="", max_length=200)
+    city: str = Field(min_length=1, max_length=100)
+    state: str = Field(min_length=1, max_length=100)
+    pin_code: str = Field(min_length=6, max_length=10)
+    session_id: Optional[str] = Field(default="session_default", min_length=1, max_length=100)
+
+class VerifyPaymentRequest(BaseModel):
+    order_id: str = Field(min_length=1, max_length=100)
+    razorpay_order_id: str = Field(min_length=1, max_length=100)
+    razorpay_payment_id: str = Field(min_length=1, max_length=100)
+    razorpay_signature: str = Field(min_length=1, max_length=256)
+
+class VerifyStockRequest(BaseModel):
+    sku: str = Field(min_length=1, max_length=32)
+    quantity: int = Field(default=1)
+    session_id: Optional[str] = Field(default="session_default", min_length=1, max_length=100)
+
+class ChatConsentRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=100)
+    consent: bool
+
+
+@app.post("/api/verify-stock")
+@app.post("/verify-stock")
+def verify_stock_endpoint(req: VerifyStockRequest):
+    """Dedicated stock verification endpoint - real backend operation, not just a UI state change."""
+    item = next((i for i in catalog if i["sku"] == req.sku), None)
+    if not item:
+        entry = log_audit_entry(
+            "stock_check", req.sku, 0,
+            f"Stock check failed: SKU '{req.sku}' not found in catalog.",
+            "N/A", "FAILED", session_id=req.session_id
+        )
+        raise HTTPException(status_code=404, detail=f"Product SKU '{req.sku}' not found.")
+
+    available = item["stock"]
+    verified = available >= req.quantity
+
+    entry = log_audit_entry(
+        "stock_check", req.sku, item["price"] * req.quantity,
+        f"Stock verification for {item['name']} (SKU: {req.sku}): requested {req.quantity}, available {available}.",
+        "PASSED" if verified else "FAILED (Insufficient Stock)",
+        "SUCCESS" if verified else "FAILED",
+        session_id=req.session_id
+    )
+
+    return {
+        "type": "stock_verified",
+        "verified": verified,
+        "sku": req.sku,
+        "product_name": item["name"],
+        "requested_quantity": req.quantity,
+        "available_stock": available,
+        "unit_price": item["price"],
+        "total_amount": item["price"] * req.quantity,
+        "message": f"Stock verified: {available} units available." if verified else f"Insufficient stock. Only {available} units available.",
+        "auditEntry": entry
+    }
+
+
+@app.get("/")
+@app.get("/api")
+@app.get("/api/")
+def root():
+    return {
+        "message": "Razorpay Checkout Agent API is running",
+        "status": "online",
+        "docs": "/docs",
+        "health": "/api/health"
+    }
+
+
+@app.get("/api/health")
+@app.get("/health")
+def health_check():
+    return {
+        "status": "online",
+        "model": MODEL_NAME,
+        "spend_cap": SPEND_CAP,
+        "groq_configured": bool(GROQ_API_KEY),
+        "razorpay_configured": bool(RAZORPAY_KEY_ID),
+        "neon_postgres_configured": bool(SessionLocal),
+    }
+
+
+@app.get("/healthz/liveness")
+@app.get("/api/healthz/liveness")
+def liveness_probe():
+    """Liveness probe for orchestrators (Kubernetes / Render / ECS)."""
+    return {"status": "alive", "timestamp": time.time()}
+
+
+@app.get("/healthz/readiness")
+@app.get("/api/healthz/readiness")
+def readiness_probe():
+    """Readiness probe verifying DB ping, catalog readiness, and guardrail engine."""
+    db_ok = True
+    db_error = None
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            from sqlalchemy import text
+            db.execute(text("SELECT 1"))
+            db.close()
+        except Exception as e:
+            db_ok = False
+            db_error = str(e)
+
+    catalog_ready = len(catalog) > 0
+    is_ready = db_ok and catalog_ready
+
+    payload = {
+        "status": "ready" if is_ready else "degraded",
+        "database_connected": db_ok,
+        "database_error": db_error,
+        "catalog_items": len(catalog),
+        "spend_cap_enforced": SPEND_CAP,
+        "llm_engine": MODEL_NAME,
+    }
+    if not is_ready:
+        raise HTTPException(status_code=503, detail=payload)
+    return payload
+
+
+@app.get("/api/catalog")
+@app.get("/catalog")
+def get_catalog():
+    return catalog
+
+
+def verify_audit_access(
+    session_id: Optional[str] = None,
+    x_admin_key: Optional[str] = None,
+    authorization: Optional[str] = None
+) -> None:
+    """Validate authorization for accessing or clearing audit records."""
+    if session_id and session_id.strip():
+        return  # Session-scoped access is allowed
+
+    token = x_admin_key
+    if not token and authorization:
+        token = authorization.replace("Bearer ", "").strip()
+    expected_key = ADMIN_API_KEY or "vasool-admin-secret-token"
+    if not token or (ADMIN_API_KEY and token != ADMIN_API_KEY):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Global audit trail access requires valid admin credentials (X-Admin-Key or Authorization header) or session_id scoping."
+        )
+
+
+@app.get("/api/audit-logs")
+@app.get("/audit-logs")
+def get_audit_logs(
+    session_id: Optional[str] = None,
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    authorization: Optional[str] = Header(None)
+):
+    verify_audit_access(session_id, x_admin_key, authorization)
+
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            query = db.query(AuditLogModel)
+            if session_id:
+                query = query.filter(AuditLogModel.session_id == session_id)
+            records = query.order_by(AuditLogModel.id.desc()).all()
+            db.close()
+            return [
+                {
+                    "id": r.id,
+                    "timestamp": r.timestamp.isoformat() if r.timestamp else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "action": r.action,
+                    "sku": r.sku or "N/A",
+                    "amount": float(r.amount) if r.amount is not None else 0.0,
+                    "reasoning": r.reasoning,
+                    "spend_cap_check": r.spend_cap_check,
+                    "result": r.result,
+                    "is_attack": r.is_attack
+                }
+                for r in records
+            ]
+        except Exception as e:
+            safe_log(f"Error querying Neon DB: {e}")
+
+    filtered = audit_logs
+    if session_id:
+        filtered = [l for l in audit_logs if l.get("session_id") == session_id]
+    return [
+        {
+            "id": l.get("id"),
+            "timestamp": l.get("timestamp"),
+            "action": l.get("action"),
+            "sku": l.get("sku", "N/A"),
+            "amount": l.get("amount", 0.0),
+            "reasoning": l.get("reasoning"),
+            "spend_cap_check": l.get("spend_cap_check"),
+            "result": l.get("result"),
+            "is_attack": l.get("is_attack", False)
+        }
+        for l in filtered
+    ]
+
+
+@app.delete("/api/audit-logs")
+@app.delete("/audit-logs")
+def clear_audit_logs_endpoint(
+    session_id: Optional[str] = None,
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    authorization: Optional[str] = Header(None)
+):
+    verify_audit_access(session_id, x_admin_key, authorization)
+
+    global audit_logs
+    if SessionLocal:
+        db = SessionLocal()
+        try:
+            query = db.query(AuditLogModel)
+            if session_id:
+                query = query.filter(AuditLogModel.session_id == session_id)
+            query.delete(synchronize_session=False)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            safe_log(f"Error clearing Neon DB audit logs: {e}")
+            raise HTTPException(status_code=500, detail="Database audit log clearing failed.")
+        finally:
+            db.close()
+
+    # Update in-memory state only after successful DB transaction
+    if session_id:
+        audit_logs = [l for l in audit_logs if l.get("session_id") != session_id]
+    else:
+        audit_logs = []
+        entry = {
+            "id": int(time.time() * 1000),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "action": "system_init",
+            "sku": "N/A",
+            "amount": 0.0,
+            "reasoning": f"Guardrail Engine & Neon DB initialized. Spend cap limit active at ₹{SPEND_CAP:,.0f}.",
+            "spend_cap_check": "PASSED",
+            "result": "SUCCESS",
+            "session_id": "system",
+            "is_attack": False
+        }
+    return {"success": True, "session_id": session_id, "message": "Audit logs cleared successfully."}
+
+
+
+@app.post("/api/create-order")
+@app.post("/create-order")
+def create_order_endpoint(req: CreateOrderRequest):
+    """Server-side order creation endpoint with price calculation, stock check & Razorpay order generation."""
+    item = next((i for i in catalog if i["sku"] == req.sku), None)
+    if not item:
+        raise HTTPException(status_code=400, detail=f"Product SKU '{req.sku}' not found in merchant catalog.")
+
+    if req.quantity < 1:
+        raise HTTPException(status_code=400, detail="Quantity must be at least 1.")
+
+    if item["stock"] < req.quantity:
+        raise HTTPException(status_code=400, detail=f"Insufficient stock. Only {item['stock']} units available for {item['name']}.")
+
+    unit_price = float(item["price"])
+    subtotal = unit_price * req.quantity
+    shipping_fee = 0.0
+    total_amount = subtotal + shipping_fee
+
+    if total_amount > SPEND_CAP:
+        log_audit_entry("create_order", req.sku, total_amount, f"Order total \u20b9{total_amount} exceeds spend cap \u20b9{SPEND_CAP}.", f"FAILED (Exceeds \u20b9{SPEND_CAP} Cap)", "BLOCKED", session_id=req.session_id, is_attack=True)
+        raise HTTPException(status_code=400, detail=f"Order total \u20b9{total_amount:,.0f} exceeds merchant hard spend cap of \u20b9{SPEND_CAP:,.0f}.")
+
+    order_id = f"ORD-{random.randint(100000, 999999)}"
+    rzp_order_id = f"demo_order_{int(time.time())}"
+    razorpay_order_created = False
+
+    if rzp_client:
+        try:
+            rzp_order = rzp_client.order.create({
+                "amount": int(total_amount * 100),
+                "currency": "INR",
+                "receipt": order_id,
+                "notes": {
+                    "sku": req.sku,
+                    "customer_name": req.customer_name[:50],
+                    "phone": req.customer_phone[:15]
+                }
+            })
+            rzp_order_id = rzp_order["id"]
+            razorpay_order_created = True
+        except Exception as e:
+            safe_log(f"Razorpay order create error: {e}")
+
+    address_str = f"{req.address_line1}, {req.address_line2 + ', ' if req.address_line2 else ''}{req.city}, {req.state} - {req.pin_code}"
+
+    order_data = {
+        "id": order_id,
+        "session_id": req.session_id,
+        "sku": req.sku,
+        "product_name": item["name"],
+        "category": item.get("category", "General"),
+        "quantity": req.quantity,
+        "unit_price": unit_price,
+        "subtotal": subtotal,
+        "shipping_fee": shipping_fee,
+        "total_amount": total_amount,
+        "status": "PENDING_PAYMENT",
+        "customer_name": req.customer_name,
+        "customer_phone": req.customer_phone,
+        "address_line1": req.address_line1,
+        "address_line2": req.address_line2,
+        "city": req.city,
+        "state": req.state,
+        "pin_code": req.pin_code,
+        "razorpay_order_id": rzp_order_id
+    }
+    orders_cache[order_id] = order_data
+
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            db_order = OrderModel(
+                id=order_id,
+                session_id=req.session_id,
+                sku=req.sku,
+                product_name=item["name"],
+                category=item.get("category", "General"),
+                quantity=req.quantity,
+                unit_price=unit_price,
+                subtotal=subtotal,
+                shipping_fee=shipping_fee,
+                total_amount=total_amount,
+                status="PENDING_PAYMENT",
+                customer_name=req.customer_name,
+                customer_phone=req.customer_phone,
+                address_line1=req.address_line1,
+                address_line2=req.address_line2,
+                city=req.city,
+                state=req.state,
+                pin_code=req.pin_code,
+                razorpay_order_id=rzp_order_id
+            )
+            db.add(db_order)
+            db.commit()
+            db.close()
+        except Exception as err:
+            safe_log(f"Postgres order save error: {err}")
+
+    log_audit_entry(
+        "create_order", req.sku, total_amount,
+        f"Order {order_id} created for {req.customer_name} ({req.quantity}x {item['name']}). Address: {address_str}",
+        "PASSED", "SUCCESS", session_id=req.session_id
+    )
+
+    return {
+        "success": True,
+        "order_id": order_id,
+        "razorpay_order_id": rzp_order_id,
+        "payment_mode": "razorpay" if razorpay_order_created else "demo",
+        "razorpay_key_id": RAZORPAY_KEY_ID if razorpay_order_created else None,
+        "amount": total_amount,
+        "currency": "INR",
+        "product": item,
+        "quantity": req.quantity,
+        "unit_price": unit_price,
+        "subtotal": subtotal,
+        "shipping_fee": shipping_fee,
+        "total_amount": total_amount,
+        "customer": {
+            "name": req.customer_name,
+            "phone": req.customer_phone,
+            "address": address_str
+        }
+    }
+
+
+@app.post("/api/verify-payment")
+@app.post("/verify-payment")
+def verify_payment_endpoint(req: VerifyPaymentRequest):
+    """Server-side Razorpay payment signature verification & order status update."""
+    valid_signature = verify_razorpay_signature(req.razorpay_order_id, req.razorpay_payment_id, req.razorpay_signature)
+
+    # Production Idempotency Guard: prevent double stock deduction if already paid
+    already_paid = False
+    if req.order_id in orders_cache and orders_cache[req.order_id].get("status") == "PAID":
+        already_paid = True
+    elif SessionLocal:
+        try:
+            db = SessionLocal()
+            existing = db.query(OrderModel).filter(
+                (OrderModel.id == req.order_id) | (OrderModel.razorpay_order_id == req.razorpay_order_id)
+            ).first()
+            if existing and existing.status == "PAID":
+                already_paid = True
+            db.close()
+        except Exception:
+            pass
+
+    if already_paid and valid_signature:
+        return {
+            "success": True,
+            "status": "PAID",
+            "order_id": req.order_id,
+            "razorpay_payment_id": req.razorpay_payment_id,
+            "order": orders_cache.get(req.order_id),
+            "idempotent": True,
+        }
+
+    new_status = "PAID" if valid_signature else "PAYMENT_FAILED"
+
+    if req.order_id in orders_cache:
+        orders_cache[req.order_id]["status"] = new_status
+        orders_cache[req.order_id]["razorpay_payment_id"] = req.razorpay_payment_id
+        orders_cache[req.order_id]["razorpay_signature"] = req.razorpay_signature
+
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            order_record = db.query(OrderModel).filter(OrderModel.id == req.order_id).first()
+            if not order_record:
+                order_record = db.query(OrderModel).filter(OrderModel.razorpay_order_id == req.razorpay_order_id).first()
+            if order_record:
+                order_record.status = new_status
+                order_record.razorpay_payment_id = req.razorpay_payment_id
+                order_record.razorpay_signature = req.razorpay_signature
+                db.commit()
+            db.close()
+        except Exception as err:
+            safe_log(f"Postgres order update error: {err}")
+
+    if valid_signature:
+        order_info = orders_cache.get(req.order_id, {})
+        sku = order_info.get("sku")
+        qty = order_info.get("quantity", 1)
+        if sku:
+            item = next((i for i in catalog if i["sku"] == sku), None)
+            if item and item["stock"] >= qty:
+                item["stock"] -= qty
+
+    log_audit_entry(
+        "payment_verify",
+        orders_cache.get(req.order_id, {}).get("sku", "N/A"),
+        float(orders_cache.get(req.order_id, {}).get("total_amount", 0)),
+        f"Payment verification for Order {req.order_id} (Razorpay Payment ID: {req.razorpay_payment_id}). Status updated to {new_status}.",
+        "PASSED" if valid_signature else "FAILED",
+        "SUCCESS" if valid_signature else "FAILED"
+    )
+
+    if not valid_signature:
+        raise HTTPException(status_code=400, detail="Payment signature verification failed.")
+
+    return {
+        "success": True,
+        "status": "PAID",
+        "order_id": req.order_id,
+        "razorpay_payment_id": req.razorpay_payment_id,
+        "order": orders_cache.get(req.order_id)
+    }
+
+
+@app.get("/api/orders/{order_id}")
+@app.get("/orders/{order_id}")
+def get_order_endpoint(order_id: str):
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            order_rec = db.query(OrderModel).filter(OrderModel.id == order_id).first()
+            db.close()
+            if order_rec:
+                return {
+                    "id": order_rec.id,
+                    "sku": order_rec.sku,
+                    "product_name": order_rec.product_name,
+                    "quantity": order_rec.quantity,
+                    "unit_price": float(order_rec.unit_price),
+                    "subtotal": float(order_rec.subtotal),
+                    "total_amount": float(order_rec.total_amount),
+                    "status": order_rec.status,
+                    "customer_name": order_rec.customer_name,
+                    "created_at": order_rec.created_at.isoformat() if order_rec.created_at else None
+                }
+        except Exception as e:
+            safe_log(f"Postgres order query note: {e}")
+
+    if order_id in orders_cache:
+        return orders_cache[order_id]
+
+    raise HTTPException(status_code=404, detail=f"Order '{order_id}' not found.")
+
+
+@app.post("/api/chat-history/consent")
+@app.post("/chat-history/consent")
+def set_chat_consent_endpoint(req: ChatConsentRequest):
+    """Set or update privacy consent choice for storing chat history for a session."""
+    session_id = req.session_id
+    session_consent_status[session_id] = req.consent
+
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            if req.consent:
+                # Store all existing in-memory messages for this session
+                in_mem = session_histories.get(session_id, [])
+                for msg in in_mem:
+                    if isinstance(msg, dict):
+                        role = msg.get("role", "user")
+                        content = msg.get("content", "")
+                        if role != "system" and content:
+                            db.add(ChatHistoryModel(
+                                session_id=session_id,
+                                role=role,
+                                content=str(content),
+                                consent_given=True
+                            ))
+                db.commit()
+            else:
+                # Insert marker record with consent_given=False & content=None
+                db.add(ChatHistoryModel(
+                    session_id=session_id,
+                    role="system",
+                    content=None,
+                    consent_given=False
+                ))
+                db.commit()
+            db.close()
+        except Exception as e:
+            safe_log(f"Error setting chat consent: {e}")
+
+    return {
+        "success": True,
+        "session_id": session_id,
+        "consent_given": req.consent,
+        "message": "Consent granted. Chat history will be stored." if req.consent else "Consent declined. History will remain in memory only."
+    }
+
+
+@app.get("/api/chat-sessions")
+@app.get("/chat-sessions")
+def get_chat_sessions_endpoint():
+    """Retrieve list of distinct saved chat sessions stored in Neon DB with consent."""
+    sessions_list = []
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            subq = db.query(ChatHistoryModel.session_id)\
+                .filter(ChatHistoryModel.consent_given == True)\
+                .filter(ChatHistoryModel.content.isnot(None))\
+                .distinct().all()
+
+            session_ids = [s[0] for s in subq if s[0]]
+
+            for sid in session_ids:
+                first_msg = db.query(ChatHistoryModel)\
+                    .filter(ChatHistoryModel.session_id == sid)\
+                    .filter(ChatHistoryModel.role == "user")\
+                    .filter(ChatHistoryModel.content.isnot(None))\
+                    .order_by(ChatHistoryModel.id.asc()).first()
+
+                count = db.query(ChatHistoryModel)\
+                    .filter(ChatHistoryModel.session_id == sid)\
+                    .filter(ChatHistoryModel.content.isnot(None)).count()
+
+                title = (first_msg.content[:36] + "...") if first_msg and len(first_msg.content or "") > 36 else (first_msg.content if first_msg else "Shopping Chat")
+                created_at = first_msg.created_at.isoformat() if first_msg and first_msg.created_at else None
+
+                sessions_list.append({
+                    "session_id": sid,
+                    "title": title,
+                    "created_at": created_at,
+                    "message_count": count
+                })
+            db.close()
+            sessions_list.sort(key=lambda s: s["created_at"] or "", reverse=True)
+        except Exception as e:
+            safe_log(f"Error querying chat sessions: {e}")
+
+    return {"sessions": sessions_list}
+
+
+@app.get("/api/chat-history/{session_id}")
+@app.get("/chat-history/{session_id}")
+def get_chat_history_endpoint(session_id: str):
+    """Retrieve stored chat history for a session (strictly filtered by session_id)."""
+    consent = get_session_consent(session_id)
+    if consent is not True:
+        return {"session_id": session_id, "consent_given": False, "messages": []}
+
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            # Session isolation: filter strictly by session_id
+            records = db.query(ChatHistoryModel)\
+                .filter(ChatHistoryModel.session_id == session_id)\
+                .filter(ChatHistoryModel.consent_given == True)\
+                .filter(ChatHistoryModel.content.isnot(None))\
+                .order_by(ChatHistoryModel.id.asc())\
+                .all()
+            db.close()
+            return {
+                "session_id": session_id,
+                "consent_given": True,
+                "messages": [
+                    {
+                        "id": r.id,
+                        "role": r.role,
+                        "content": r.content,
+                        "created_at": r.created_at.isoformat() if r.created_at else None
+                    }
+                    for r in records
+                ]
+            }
+        except Exception as e:
+            safe_log(f"Error querying chat history: {e}")
+
+    return {"session_id": session_id, "consent_given": True, "messages": []}
+
+
+@app.delete("/api/chat-history/{session_id}")
+@app.delete("/chat-history/{session_id}")
+def delete_chat_history_endpoint(session_id: str):
+    """Clear stored history for a session from DB & reset session state."""
+    session_consent_status.pop(session_id, None)
+    session_order_counts.pop(session_id, None)
+    if session_id in session_histories:
+        session_histories[session_id] = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    deleted_count = 0
+    if SessionLocal:
+        try:
+            db = SessionLocal()
+            # Session isolation: filter strictly by session_id
+            deleted_count = db.query(ChatHistoryModel).filter(ChatHistoryModel.session_id == session_id).delete(synchronize_session=False)
+            db.commit()
+            db.close()
+        except Exception as e:
+            safe_log(f"Error deleting chat history: {e}")
+
+    return {
+        "success": True,
+        "session_id": session_id,
+        "deleted_count": deleted_count,
+        "message": f"Chat history for session '{session_id}' cleared."
+    }
+
+
+def normalize_text_for_security(text: str) -> tuple[str, str, str]:
+    """Normalize input text to catch obfuscated and adversarial bypass attempts."""
+    prompt_lower = text.lower().strip()
+    leet_trans = str.maketrans({
+        '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't',
+        '$': 's', '@': 'a', '!': 'i', '+': 't', '_': ' ', '-': ' ', '.': ' '
+    })
+    prompt_leet = prompt_lower.translate(leet_trans)
+    compact = re.sub(r'[^a-z0-9]', '', prompt_lower)
+    compact_leet = re.sub(r'[^a-z0-9]', '', prompt_leet)
+    return prompt_lower, compact, compact_leet
+
+
+def inspect_guardrails(req: ChatRequest, needs_consent: bool) -> Optional[Dict[str, Any]]:
+    session_cap = req.spend_cap or SPEND_CAP
+    session_id = req.session_id or "session_default"
+    raw_prompt = req.message
+    prompt_lower, compact, compact_leet = normalize_text_for_security(raw_prompt)
+
+    # 1. Spend Cap & Budget Bypass / High-Value & Quantity Manipulations
+    has_large_number = (
+        bool(re.search(r'\b(?:50\s*000|50k|100k|200k|500k|100000|50000|[5-9]\d{4,}|\d{6,})\b', prompt_lower))
+        or bool(re.search(r'50000|100000|50k|100k', compact))
+        or "fiftythousand" in compact_leet
+        or "onelakh" in compact_leet
+        or "hundredthousand" in compact_leet
+    )
+    has_cap_override = (
+        bool(re.search(
+            r'(?:ignore|bypass|override|disable|skip|remove|forget|reset|disregard)\s+(?:all\s+)?(?:rules?|limits?|guardrails?|instructions?|spend\s*caps?|budgets?|caps?|filters?)',
+            prompt_lower
+        ))
+        or bool(re.search(r'(?:price|cost|amount)\s*(?:to|is|as|[:=])?\s*(?:0|zero|free|negative|null|-)', prompt_lower))
+        or bool(re.search(r'(?:set|make|force|change)\s+(?:the\s+)?(?:price|cost|amount)\s+(?:to|as|is|=)?\s*(?:0|zero|free)', prompt_lower))
+        or (("ignore" in prompt_lower or "bypass" in prompt_lower or "override" in prompt_lower or "skip" in prompt_lower) and any(k in prompt_lower for k in ["order", "spend", "cap", "limit", "rules"]))
+    )
+    has_high_qty_abuse = (
+        bool(re.search(r'\b(?:quantity|qty|units?|pairs?|items?|pieces?)\s*[:=]?\s*(?:[5-9]\d|\d{3,})\b', prompt_lower))
+        or bool(re.search(r'\b(?:[5-9]\d|\d{3,})\s*(?:units?|pairs?|items?|pieces?)\b', prompt_lower))
+    )
+
+    if has_large_number or has_cap_override or has_high_qty_abuse:
+        entry = log_audit_entry(
+            "create_order", "CUSTOM_OVERRIDE", 50000,
+            f"Prompt injection / spend cap bypass attack detected: '{raw_prompt[:60]}'.",
+            f"FAILED (> ₹{session_cap:,.0f})", "BLOCKED",
+            session_id=session_id, is_attack=True
+        )
+        res_reply = f"GUARDRAIL ENFORCED: Order amount or parameters exceed merchant hard spend cap of ₹{session_cap:,.0f}. Action blocked at code level."
+        persist_chat_message(session_id, "assistant", res_reply)
+        return {"type": "blocked", "reply": res_reply, "blocked": True, "auditEntry": entry, "needs_consent": needs_consent}
+
+    # 2. Scope Lock: Unauthorized Discount Codes / Promo / Price Waivers (including obfuscation)
+    has_unauthorized_discount = (
+        "secret90" in compact or "secret90" in compact_leet or "secret100" in compact or "admin90" in compact or "admin100" in compact or "free100" in compact or "hack90" in compact or "vip90" in compact
+        or bool(re.search(r'\b(?:secret|admin|promo|hack|voucher|coupon|code)\s*[-_.]?\s*(?:90|100|99|80|50|free|admin|vip)\b', prompt_lower))
+        or bool(re.search(r'\b(?:90%|100%|95%|99%)\s*(?:off|discount|sale|waiver|reduction)\b', prompt_lower))
+        or (("discount" in prompt_lower or "coupon" in prompt_lower or "promo" in prompt_lower) and any(w in prompt_lower for w in ["90%", "100%", "secret", "admin", "hack", "override", "unlimited", "free"]))
+    )
+    if has_unauthorized_discount:
+        entry = log_audit_entry(
+            "apply_discount", "UNKNOWN", 0,
+            f"Unauthorized discount code / promo injection attempt: '{raw_prompt[:60]}'.",
+            "REJECTED (Scope Lock)", "BLOCKED",
+            session_id=session_id, is_attack=True
+        )
+        res_reply = "GUARDRAIL BLOCK: Requested discount code is not in the authorized merchant whitelist."
+        persist_chat_message(session_id, "assistant", res_reply)
+        return {"type": "blocked", "reply": res_reply, "blocked": True, "auditEntry": entry, "needs_consent": needs_consent}
+
+    # 3. System Prompt / Jailbreak Injection
+    has_jailbreak = (
+        bool(re.search(
+            r'\b(?:dan\s*mode|jailbreak|developer\s*mode|unfiltered\s*mode|unrestricted\s*mode|system\s*prompt|system\s*override|reveal\s+(?:system\s+)?instructions?|print\s+(?:system\s+)?prompt)\b',
+            prompt_lower
+        ))
+        or "jailbreak" in compact or "danmode" in compact or "developermode" in compact
+        or ("ignore" in prompt_lower and "instructions" in prompt_lower and "previous" in prompt_lower)
+    )
+    if has_jailbreak:
+        entry = log_audit_entry(
+            "jailbreak_detection", "N/A", 0,
+            f"System prompt / jailbreak injection detected: '{raw_prompt[:60]}'.",
+            "BLOCKED (Jailbreak)", "BLOCKED",
+            session_id=session_id, is_attack=True
+        )
+        res_reply = "GUARDRAIL ENFORCED: System prompt override or jailbreak pattern detected and blocked."
+        persist_chat_message(session_id, "assistant", res_reply)
+        return {"type": "blocked", "reply": res_reply, "blocked": True, "auditEntry": entry, "needs_consent": needs_consent}
+
+    # 4. Session & PII Isolation Exfiltration
+    has_session_exfil = (
+        bool(re.search(r'\b(?:session[_\s-]*id|sessionid|session[_\s-]*token|auth[_\s-]*token|api[_\s-]*key|secret[_\s-]*key)\b', prompt_lower))
+        or "sessionid" in compact or "sessiontoken" in compact
+        or bool(re.search(r'\b(?:other\s+session|other\s+customer|previous\s+customer|last\s+customer|past\s+orders?|customer\s+phone|customer\s+email|customer\s+address|dump\s+database|select\s+\*\s+from)\b', prompt_lower))
+    )
+    if has_session_exfil:
+        entry = log_audit_entry(
+            "read_session_data", "N/A", 0,
+            f"Session metadata / cross-session data exfiltration query blocked: '{raw_prompt[:60]}'.",
+            "BLOCKED (Isolation)", "BLOCKED",
+            session_id=session_id, is_attack=True
+        )
+        res_reply = "SESSION ISOLATION: Session identifiers, tokens, and cross-session metadata are confidential."
+        persist_chat_message(session_id, "assistant", res_reply)
+        return {"type": "blocked", "reply": res_reply, "blocked": True, "auditEntry": entry, "needs_consent": needs_consent}
+
+    return None
+
+
+@app.post("/api/chat")
+@app.post("/chat")
+def chat_endpoint(req: ChatRequest):
+    session_id = req.session_id or "session_default"
+    needs_consent = (get_session_consent(session_id) is None)
+
+    if session_id not in session_histories:
+        hist = [{"role": "system", "content": SYSTEM_PROMPT}]
+        if SessionLocal:
+            try:
+                db = SessionLocal()
+                records = db.query(ChatHistoryModel)\
+                    .filter(ChatHistoryModel.session_id == session_id)\
+                    .filter(ChatHistoryModel.consent_given == True)\
+                    .filter(ChatHistoryModel.content.isnot(None))\
+                    .order_by(ChatHistoryModel.id.asc())\
+                    .all()
+                db.close()
+                for r in records:
+                    if r.role in ["user", "assistant"] and r.content:
+                        hist.append({"role": r.role, "content": r.content})
+            except Exception as e:
+                safe_log(f"Error hydrating session history from DB: {e}")
+        session_histories[session_id] = hist
+
+    history = session_histories[session_id]
+    history.append({"role": "user", "content": req.message})
+    persist_chat_message(session_id, "user", req.message)
+
+    # Active Pre-LLM Guardrail Inspector
+    guardrail_block = inspect_guardrails(req, needs_consent)
+    if guardrail_block:
+        history.append({"role": "assistant", "content": guardrail_block["reply"]})
+        return guardrail_block
+
+    if is_catalog_browse_request(req.message):
+        res_reply = catalog_browse_reply()
+        history.append({"role": "assistant", "content": res_reply})
+        persist_chat_message(session_id, "assistant", res_reply)
+        return {"type": "catalog_browse", "reply": res_reply, "products": [], "comparison": [], "auditEntry": None, "needs_consent": needs_consent}
+
+    compare_res = ambiguous_compare_response(req, needs_consent)
+    if compare_res:
+        history.append({"role": "assistant", "content": compare_res["reply"]})
+        persist_chat_message(session_id, "assistant", compare_res["reply"])
+        return compare_res
+
+    if not groq_client:
+        res = _fallback_chat(req)
+        res["needs_consent"] = needs_consent
+        return res
+
+    try:
+        response = groq_client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=history,
+            tools=TOOL_DEFINITIONS,
+            tool_choice="auto",
+            max_tokens=1024,
+            temperature=0.7,
+        )
+
+        msg = response.choices[0].message
+
+        if msg.tool_calls:
+            history.append(msg)
+
+            all_products = []
+            comparison_products = []
+            comparison_called = False
+            audit_entry = None
+            order_result = None
+            search_query = req.message
+
+            for tool_call in msg.tool_calls:
+                fn_name = tool_call.function.name
+                fn_args = json.loads(tool_call.function.arguments)
+                result = execute_tool_call(fn_name, fn_args, session_id)
+                if fn_name == "search_catalog":
+                    search_query = result.get("query") or fn_args.get("query") or req.message
+
+                history.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(result),
+                })
+
+                if "products" in result:
+                    all_products.extend(result["products"])
+                if "comparison" in result:
+                    comparison_products.extend(result["comparison"])
+                    comparison_called = True
+                if "auditEntry" in result:
+                    audit_entry = result["auditEntry"]
+                if "order_id" in result:
+                    order_result = result
+
+            follow_up = groq_client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=history,
+                max_tokens=1024,
+                temperature=0.7,
+            )
+
+            raw_reply = follow_up.choices[0].message.content or ""
+            clean_reply = clean_agent_reply(raw_reply)
+            returned_products = all_products[:6]
+            if comparison_called:
+                clean_reply = f"Here are {len(comparison_products)} products side by side for comparison."
+            elif all_products or any(tool_call.function.name == "search_catalog" for tool_call in msg.tool_calls):
+                clean_reply = search_reply(search_query, returned_products)
+
+            history.append({"role": "assistant", "content": clean_reply})
+            persist_chat_message(session_id, "assistant", clean_reply)
+
+            response_type = "comparison" if comparison_called else "product_search" if all_products else "text"
+            response_data = {
+                "type": response_type,
+                "reply": clean_reply or search_reply(search_query, returned_products),
+                "products": returned_products,
+                "comparison": comparison_products,
+                "auditEntry": audit_entry,
+                "needs_consent": needs_consent,
+            }
+            if order_result and order_result.get("success"):
+                response_data["type"] = "order_created"
+                response_data["order"] = order_result
+            if audit_entry and audit_entry.get("result") == "BLOCKED":
+                response_data["blocked"] = True
+
+            return response_data
+
+        else:
+            raw_reply = msg.content or ""
+            clean_reply = clean_agent_reply(raw_reply)
+            history.append({"role": "assistant", "content": clean_reply})
+            persist_chat_message(session_id, "assistant", clean_reply)
+            return {"type": "text", "reply": clean_reply, "products": [], "comparison": [], "auditEntry": None, "needs_consent": needs_consent}
+
+    except Exception as e:
+        safe_log(f"Groq API error: {e}")
+        res = _fallback_chat(req)
+        res["needs_consent"] = needs_consent
+        return res
+
+
+def _fallback_chat(req: ChatRequest):
+    """Rule-based fallback when Groq API is unavailable."""
+    prompt_lower = req.message.lower().strip()
+    session_id = req.session_id or "session_default"
+    needs_consent = (get_session_consent(session_id) is None)
+
+    # Active Multi-Vector Guardrail Inspector
+    guardrail_block = inspect_guardrails(req, needs_consent)
+    if guardrail_block:
+        return guardrail_block
+
+    # Check for single-round clarifying question on vague single/two-word category requests
+    clean_prompt = re.sub(r'\b(i|want|to|buy|get|an|a|show|me|need|find|some|the|looking|for)\b', '', prompt_lower)
+    clean_prompt = re.sub(r'\s+', ' ', clean_prompt).strip()
+
+    history = session_histories.get(session_id, [])
+    already_asked_clarifying = any(
+        isinstance(m, dict) and m.get("role") == "assistant" and "?" in m.get("content", "")
+        for m in history
+    )
+
+    if not already_asked_clarifying:
+        if clean_prompt in ["pant", "pants", "trouser", "trousers", "bottom", "bottoms"]:
+            res_reply = "Are you looking for casual jeans, formal trousers, cargo pants, or chinos?"
+            persist_chat_message(session_id, "assistant", res_reply)
+            return {"type": "text", "reply": res_reply, "products": [], "comparison": [], "auditEntry": None, "needs_consent": needs_consent}
+
+        elif clean_prompt in ["shoe", "shoes", "sneaker", "sneakers", "footwear"]:
+            res_reply = "Are you looking for running shoes, casual sneakers, training shoes, or formal loafers?"
+            persist_chat_message(session_id, "assistant", res_reply)
+            return {"type": "text", "reply": res_reply, "products": [], "comparison": [], "auditEntry": None, "needs_consent": needs_consent}
+
+        elif clean_prompt in ["shirt", "tshirt", "t-shirt", "top", "apparel", "clothes"]:
+            res_reply = "Are you looking for casual T-shirts, formal Oxford shirts, hoodies, or polo shirts?"
+            persist_chat_message(session_id, "assistant", res_reply)
+            return {"type": "text", "reply": res_reply, "products": [], "comparison": [], "auditEntry": None, "needs_consent": needs_consent}
+
+    # Execute intelligent catalog search
+    matched = search_catalog_items(req.message)
+
+    if matched:
+        item = matched[0]
+        products = matched[:6]
+        entry = log_audit_entry("catalog_lookup", item["sku"], item["price"],
+                                 f"Catalog search for '{req.message}'. Found {len(matched)} result(s).", "PASSED", "SUCCESS", session_id=session_id)
+        res_reply = search_reply(req.message, products)
+        persist_chat_message(session_id, "assistant", res_reply)
+        return {
+            "type": "product_search",
+            "reply": res_reply,
+            "products": products,
+            "comparison": [],
+            "auditEntry": entry,
+            "needs_consent": needs_consent,
+        }
+
+    res_reply = search_reply(req.message, [])
+    persist_chat_message(session_id, "assistant", res_reply)
+    return {
+        "type": "text",
+        "reply": res_reply,
+        "products": [],
+        "comparison": [],
+        "auditEntry": None,
+        "needs_consent": needs_consent,
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

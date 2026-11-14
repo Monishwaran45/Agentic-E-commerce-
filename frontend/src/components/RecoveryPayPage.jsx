@@ -18,11 +18,11 @@ import { getRecoveryPayDetails, verifyRecoveryPayment, getRecoveryOrderStatus } 
 const I18N = {
   en: {
     title: 'Secure Settlement Checkout',
-    testMode: 'Razorpay Test Mode - No real funds are debited',
+    testMode: 'Test Mode - No real funds are debited',
     merchant: 'Merchant / Creditor',
     reference: 'Case Reference',
     amountDue: 'Settlement Amount Due',
-    payButton: 'Pay with Razorpay',
+    payButton: 'Complete Secure Payment',
     payingNotice: 'Opening secure payment gateway...',
     reportedTitle: 'Payment Received',
     reportedSubtitle: 'Verifying cryptographic HMAC signature with bank...',
