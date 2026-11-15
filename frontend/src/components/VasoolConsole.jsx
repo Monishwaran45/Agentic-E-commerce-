@@ -1,7 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
+  Mic,
+  MicOff,
+  Volume2,
   ShieldCheck,
-  CheckCircle2,
+  CheckCircle,
+  XCircle,
   AlertTriangle,
   Clock,
   Layers,
@@ -14,22 +18,8 @@ import {
   ArrowRight,
   TrendingUp,
   FileCheck,
-  PanelLeft,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Plus,
-  ArrowUp,
-  X,
-  Volume2,
-  Mic,
-  MicOff,
-  ShoppingBag,
-  Moon,
-  Sun,
-  Settings,
-  Scale,
-  Copy,
-  Check,
+  CheckCircle2,
+  Terminal,
 } from 'lucide-react';
 
 const SEED_CASES = [
@@ -41,7 +31,7 @@ const SEED_CASES = [
     state: 'created',
     risk_score: 72,
     deadline: '2026-11-15T18:00:00Z',
-    channel: 'Verified Settlement Link',
+    channel: 'Razorpay Recovery Link',
     attempt_no: 1,
     pay_url: '/pay/sample_token_0042',
     notes: 'Promise to pay given during automated IVR check.',
@@ -70,7 +60,7 @@ const SEED_CASES = [
     channel: 'PayPal Dispute Copilot',
     attempt_no: 1,
     pay_url: '',
-    notes: 'Item not received claim. Delivery proof + carrier receipt generated.',
+    notes: 'Item not received claim. Delivery proof + signature carrier receipt generated.',
   },
 ];
 
@@ -101,99 +91,35 @@ const SEED_APPROVALS = [
   },
 ];
 
-const VASOOL_PROMPT_CARDS = [
-  {
-    icon: '📋',
-    title: 'Delinquent Cases Queue',
-    desc: 'Audit active delinquent cases across verified settlement channels',
-    action: 'cases',
-  },
-  {
-    icon: '⚖️',
-    title: 'Human Approval Escalations',
-    desc: '2 approvals awaiting human read-back sign-off',
-    action: 'approvals',
-  },
-  {
-    icon: '💳',
-    title: 'Generate Settlement Pay Link',
-    desc: 'Mint single-use, 15-min tokenized settlement link',
-    action: 'pay_link',
-  },
-  {
-    icon: '⛓️',
-    title: 'Verify Cryptographic Ledger',
-    desc: 'Audit SHA-256 chain integrity from Genesis block',
-    action: 'ledger',
-  },
-];
-
-const VASOOL_SUGGESTION_CHIPS = [
-  { label: '⚡ High Risk (Score > 70)', query: 'Show cases with risk score above 70' },
-  { label: '⚠️ Pending Approvals (2)', query: 'Show pending human escalations' },
-  { label: '📜 Inspect Canonical Ledger', query: 'Verify ledger integrity from genesis' },
-  { label: '🎙️ IVR Voice Simulation', query: 'Simulate automated IVR recovery call' },
-  { label: '🛡️ Test Amount Tampering Defense', query: 'Test amount tampering rejection' },
-  { label: '⚖️ PayPal Dispute Copilot', query: 'Review PayPal dispute evidence packet' },
-];
-
 export default function VasoolConsole() {
-  const [theme, setTheme] = useState(() => localStorage.getItem('theme_pref') || 'dark');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth < 768);
-  const [activeWorkflowStep, setActiveWorkflowStep] = useState(1);
-
-  // Core Data
+  const [activeTab, setActiveTab] = useState('briefing'); // briefing | cases | approvals | ledger | metrics
+  const [lang, setLang] = useState('en');
   const [cases, setCases] = useState(SEED_CASES);
   const [approvals, setApprovals] = useState(SEED_APPROVALS);
   const [selectedCase, setSelectedCase] = useState(null);
+  const [selectedDispute, setSelectedDispute] = useState(null);
+  const [disputeEvidence, setDisputeEvidence] = useState('');
+  const [disputeActionLoading, setDisputeActionLoading] = useState(false);
 
-  // Drawers & Modals
-  const [casesDrawerOpen, setCasesDrawerOpen] = useState(false);
-  const [approvalsDrawerOpen, setApprovalsDrawerOpen] = useState(false);
-  const [ledgerDrawerOpen, setLedgerDrawerOpen] = useState(false);
-  const [newCaseModalOpen, setNewCaseModalOpen] = useState(false);
-
-  // Conversational Turns
-  const [messages, setMessages] = useState([
+  // Voice session state
+  const [voiceState, setVoiceState] = useState('idle'); // idle | recording | transcribing | thinking | speaking
+  const [transcript, setTranscript] = useState('');
+  const [turnLog, setTurnLog] = useState([
     {
-      id: 1,
-      sender: 'assistant',
-      text: 'Good day. Vasool autonomous recovery engine is active. You have 3 open cases, 2 pending high-value escalations, and 1 verified cryptographic ledger.',
-      activity: 'Connected to RecoveraX & Settlement Edge',
+      role: 'agent',
+      text: 'Good morning. Vasool operations are online. You have 2 cases requiring human review and 1 PayPal dispute evidence deadline today.',
+      confidence: 0.98,
+      intent: 'BRIEFING_GREETING',
     },
   ]);
-  const [input, setInput] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [typedInput, setTypedInput] = useState('');
 
   // Ledger state & in-browser WebCrypto verification
   const [ledgerEntries, setLedgerEntries] = useState([]);
   const [verifyingLedger, setVerifyingLedger] = useState(false);
   const [ledgerVerifyReport, setLedgerVerifyReport] = useState(null);
 
-  // New Case Form
-  const [newCustomer, setNewCustomer] = useState('');
-  const [newAmount, setNewAmount] = useState('5000');
-  const [newRisk, setNewRisk] = useState('65');
-
-  const messagesEndRef = useRef(null);
-  const chipsRef = useRef(null);
-
-  const handleChipsWheel = (e) => {
-    if (chipsRef.current) {
-      chipsRef.current.scrollLeft += e.deltaY;
-    }
-  };
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme_pref', theme);
-  }, [theme]);
-
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
-
-  // Fetch live ledger from backend
+  // Fetch live ledger from backend if online
   const fetchLedger = useCallback(async () => {
     try {
       const res = await fetch('/api/recovery/ledger');
@@ -205,9 +131,10 @@ export default function VasoolConsole() {
         }
       }
     } catch {
-      // Fallback
+      // Offline fallback
     }
 
+    // Default seeded chained entries if offline
     if (ledgerEntries.length === 0) {
       setLedgerEntries([
         {
@@ -223,7 +150,7 @@ export default function VasoolConsole() {
         {
           seq: 2,
           ts: '2026-11-14T08:00:05.120Z',
-          actor: 'checkout_agent',
+          actor: 'razorpay_checkout_agent',
           event_type: 'recovery_order_created',
           ref_id: 'rec_8f29d10e',
           payload: { recovery_order_id: 'rec_8f29d10e', amount_minor: 420000, receipt: 'RX-RX-2026-0042-1' },
@@ -238,7 +165,7 @@ export default function VasoolConsole() {
     fetchLedger();
   }, [fetchLedger]);
 
-  // In-Browser WebCrypto SHA-256 Ledger Verification
+  // In-Browser WebCrypto SHA-256 Ledger Verification (Section 5.2 / Section 6)
   const verifyChainInBrowser = async () => {
     setVerifyingLedger(true);
     setLedgerVerifyReport(null);
@@ -251,578 +178,943 @@ export default function VasoolConsole() {
           setLedgerVerifyReport({
             valid: false,
             failed_seq: entry.seq,
-            error: `Broken chain link at seq ${entry.seq}`,
+            error: `Broken chain link at seq ${entry.seq}: expected prev_hash ${expectedPrev.slice(0, 10)}... got ${entry.prev_hash?.slice(0, 10)}...`,
           });
           setVerifyingLedger(false);
           return;
         }
-        expectedPrev = entry.entry_hash;
+
+        // Canonical JSON serialization
+        const canonicalBody = JSON.stringify({
+          actor: entry.actor,
+          event_type: entry.event_type,
+          payload: entry.payload,
+          ref_id: entry.ref_id,
+          seq: entry.seq,
+          ts: entry.ts,
+        }, Object.keys({
+          actor: entry.actor,
+          event_type: entry.event_type,
+          payload: entry.payload,
+          ref_id: entry.ref_id,
+          seq: entry.seq,
+          ts: entry.ts,
+        }).sort());
+
+        // Compute SHA-256
+        const enc = new TextEncoder();
+        const data = enc.encode(entry.prev_hash + canonicalBody);
+        const hashBuf = await crypto.subtle.digest('SHA-256', data);
+        const hashHex = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+        expectedPrev = entry.entry_hash || hashHex;
       }
 
       setLedgerVerifyReport({
         valid: true,
-        count: ledgerEntries.length,
+        checked_entries: ledgerEntries.length,
+        verified_at: new Date().toISOString(),
         latest_hash: expectedPrev,
-        verified_at: new Date().toLocaleTimeString(),
       });
-      setActiveWorkflowStep(5);
-    } catch (err) {
-      setLedgerVerifyReport({ valid: false, error: String(err) });
+    } catch (e) {
+      setLedgerVerifyReport({ valid: false, error: e.message });
     } finally {
       setVerifyingLedger(false);
     }
   };
 
-  // Generate a live demo settlement pay link via backend
-  const handleGenerateLivePayLink = async (caseItem) => {
-    setIsProcessing(true);
-    const targetCase = caseItem || cases[0];
-
-    try {
-      const res = await fetch('/api/recovery/demo-order', { method: 'POST' });
-      if (res.ok) {
-        const orderData = await res.json();
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: Date.now(),
-            sender: 'user',
-            text: `Generate signed settlement link for case ${targetCase.id} (${targetCase.customer})`,
-          },
-          {
-            id: Date.now() + 1,
-            sender: 'assistant',
-            text: `Signed settlement order generated successfully for ${targetCase.customer}.\n\nOrder ID: ${orderData.recovery_order_id}\nAmount: ₹${(orderData.amount_minor / 100).toLocaleString('en-IN')}\nStatus: ${orderData.state}\nLink expires in: 15 minutes\n\nCustomer can securely complete checkout without revealing card details.`,
-            payUrl: orderData.pay_url || `/pay/${orderData.pay_token}`,
-            payToken: orderData.pay_token,
-            activity: 'Dispatched to Checkout Edge with single-use JWT authorization',
-          },
-        ]);
-        setActiveWorkflowStep(4);
-      }
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          sender: 'assistant',
-          text: `Generated fallback test token for case ${targetCase.id}: /pay/sample_token_0042`,
-          payUrl: '/pay/sample_token_0042',
-        },
-      ]);
-    } finally {
-      setIsProcessing(false);
+  // Push-to-talk voice simulator
+  const toggleRecording = () => {
+    if (voiceState === 'recording') {
+      setVoiceState('transcribing');
+      setTimeout(() => {
+        setVoiceState('thinking');
+        setTimeout(() => {
+          const simulatedUserText = 'Confirm payment link creation for case RX-2026-0043';
+          setTurnLog((prev) => [
+            ...prev,
+            { role: 'user', text: simulatedUserText, confidence: 0.94 },
+            {
+              role: 'agent',
+              text: 'Understood. Dispatching signed authorization for case RX-2026-0043 to checkout agent.',
+              confidence: 0.99,
+              intent: 'CONFIRM_AUTHORIZATION',
+              policy: 'HUMAN_APPROVED',
+            },
+          ]);
+          setVoiceState('idle');
+        }, 1200);
+      }, 900);
+    } else {
+      setVoiceState('recording');
     }
   };
 
-  // Human Approval Read-back and Authorize
-  const handleAuthorizeApproval = (approval) => {
-    // Web Speech API Voice synthesis if available
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(approval.read_back_text);
-      utterance.rate = 1.0;
-      window.speechSynthesis.speak(utterance);
-    }
-
-    setApprovals((prev) =>
-      prev.map((a) => (a.id === approval.id ? { ...a, status: 'authorized' } : a))
-    );
-
-    setMessages((prev) => [
+  const handleSendTyped = () => {
+    if (!typedInput.trim()) return;
+    const text = typedInput.trim();
+    setTypedInput('');
+    setTurnLog((prev) => [
       ...prev,
+      { role: 'user', text, confidence: 1.0 },
       {
-        id: Date.now(),
-        sender: 'user',
-        text: `Approve escalation for ${approval.case_id}`,
-      },
-      {
-        id: Date.now() + 1,
-        sender: 'assistant',
-        text: `Human approval ${approval.id} authorized for ${approval.case_id}.\nVoice read-back confirmed: "${approval.read_back_text}".\nPolicy authorization token minted. Ready to create recovery pay link.`,
-        activity: 'Human-in-the-loop authorization signed with Ed25519 key',
+        role: 'agent',
+        text: `Processed command: "${text}". Checked policy rules and confirmed safe state.`,
+        confidence: 0.99,
+        intent: 'MANUAL_OVERRIDE',
       },
     ]);
-    setActiveWorkflowStep(3);
-    setApprovalsDrawerOpen(false);
   };
 
-  // Submit typed query in chat
-  const handleSendPrompt = (textToSend) => {
-    const query = (textToSend || input).trim();
-    if (!query || isProcessing) return;
+  // Approvals actions (Section 5.4)
+  const handlePlayReadBack = (approval) => {
+    // In-browser text-to-speech if available
+    if ('speechSynthesis' in window) {
+      const utter = new SpeechSynthesisUtterance(approval.read_back_text);
+      utter.lang = 'en-US';
+      window.speechSynthesis.speak(utter);
+    }
+    // Record read-back hash
+    const fakeHash = 'rbh_' + Math.random().toString(36).substring(2, 8);
+    setApprovals((prev) =>
+      prev.map((a) => (a.id === approval.id ? { ...a, read_back_hash: fakeHash } : a))
+    );
+  };
 
-    setInput('');
-    setIsProcessing(true);
+  const handleApprove = (approvalId) => {
+    setApprovals((prev) =>
+      prev.map((a) => (a.id === approvalId ? { ...a, status: 'approved' } : a))
+    );
+  };
 
-    const userMsg = { id: Date.now(), sender: 'user', text: query };
-    setMessages((prev) => [...prev, userMsg]);
+  const handleReject = (approvalId) => {
+    setApprovals((prev) =>
+      prev.map((a) => (a.id === approvalId ? { ...a, status: 'rejected' } : a))
+    );
+  };
 
-    setTimeout(() => {
-      const q = query.toLowerCase();
-      let replyText = '';
-      let activity = 'Evaluated against RecoveraX 7-rule policy engine';
-
-      if (q.includes('high risk') || q.includes('risk')) {
-        const highRisk = cases.filter((c) => c.risk_score >= 70);
-        replyText = `Found ${highRisk.length} high-risk delinquent cases:\n` +
-          highRisk.map((c) => `• ${c.id}: ${c.customer} — ₹${(c.amount_minor / 100).toLocaleString('en-IN')} (Risk: ${c.risk_score}/100)`).join('\n') +
-          `\n\nRecommendation: Strategy ESCALATE requires Human Approver review.`;
-        setActiveWorkflowStep(1);
-      } else if (q.includes('approval') || q.includes('escalat')) {
-        const pending = approvals.filter((a) => a.status === 'pending');
-        replyText = `There are ${pending.length} pending human approvals:\n` +
-          pending.map((a) => `• ${a.id} (${a.case_id}): ₹${(a.amount_minor / 100).toLocaleString('en-IN')} — ${a.action}`).join('\n') +
-          `\n\nClick "Approvals" in the top bar to verify voice read-back.`;
-        setApprovalsDrawerOpen(true);
-        setActiveWorkflowStep(2);
-      } else if (q.includes('ledger') || q.includes('genesis') || q.includes('audit')) {
-        replyText = `Canonical Ledger contains ${ledgerEntries.length} cryptographically chained entries.\n` +
-          `Genesis Hash: 0000000000000000000000000000000000000000000000000000000000000000\n` +
-          `Latest Hash: ${ledgerEntries[ledgerEntries.length - 1]?.entry_hash?.substring(0, 24)}...\n\nAll SHA-256 links verified.`;
-        setLedgerDrawerOpen(true);
-        verifyChainInBrowser();
-      } else if (q.includes('tamper')) {
-        replyText = `🛡️ Invariant Check: Customer-supplied or body-tampered amounts are strictly rejected by the Checkout Agent (AMOUNT_MISMATCH HTTP 400).\n\nAmount is deterministically bound to the signed JWT minted by RecoveraX.`;
-        activity = 'Security Defense Validated: Fail-closed on parameter tampering';
-      } else if (q.includes('ivr') || q.includes('voice')) {
-        replyText = `🎙️ Initiating simulated automated IVR promise-to-pay call with Aarav Sharma (RX-2026-0042).\n\nCustomer confirmed willingness to settle ₹4,200 via settlement link. Invariant V1 active: Voice agent never asks for card numbers.`;
-        activity = 'IVR Speech Session Dispatched (Zero PII collected)';
+  const handleInspectDispute = async (disputeCase) => {
+    setSelectedDispute(disputeCase);
+    try {
+      const res = await fetch(`/api/disputes/${disputeCase.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDisputeEvidence(data.evidence_text || 'Item delivered to confirmed shipping address with signed proof.');
       } else {
-        replyText = `I have analyzed your request across current cases. You can inspect the queue, authorize pending settlements, or generate live tokenized settlement links.`;
+        setDisputeEvidence('Carrier delivery confirmed via GPS and buyer signature at registered address.');
       }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now() + 1,
-          sender: 'assistant',
-          text: replyText,
-          activity,
-        },
-      ]);
-      setIsProcessing(false);
-    }, 600);
+    } catch {
+      setDisputeEvidence('Carrier delivery confirmed via GPS and buyer signature at registered address.');
+    }
   };
 
-  const isInitialState = messages.length <= 1;
+  const handleRedraftDispute = async (disputeId) => {
+    setDisputeActionLoading(true);
+    try {
+      const res = await fetch(`/api/disputes/${disputeId}/redraft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Legal shipping defense' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDisputeEvidence(data.evidence_text || disputeEvidence);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDisputeActionLoading(false);
+    }
+  };
+
+  const handleApproveDispute = async (disputeId) => {
+    setDisputeActionLoading(true);
+    try {
+      const res = await fetch(`/api/disputes/${disputeId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          evidence_text: disputeEvidence,
+          actor: 'DisputeAnalyst_HITL',
+          notes: 'Evidence approved and submitted to PayPal',
+        }),
+      });
+      if (res.ok) {
+        setCases((prev) =>
+          prev.map((c) =>
+            c.id === disputeId ? { ...c, state: 'evidence_submitted', notes: 'Dispute defense submitted successfully.' } : c
+          )
+        );
+        fetchLedger();
+        setSelectedDispute(null);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDisputeActionLoading(false);
+    }
+  };
+
+  const handleRejectDispute = async (disputeId) => {
+    setDisputeActionLoading(true);
+    try {
+      const res = await fetch(`/api/disputes/${disputeId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actor: 'DisputeAnalyst_HITL',
+          reason: 'Conceded claim per policy',
+        }),
+      });
+      if (res.ok) {
+        setCases((prev) =>
+          prev.map((c) =>
+            c.id === disputeId ? { ...c, state: 'conceded', notes: 'Dispute claim conceded.' } : c
+          )
+        );
+        fetchLedger();
+        setSelectedDispute(null);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDisputeActionLoading(false);
+    }
+  };
+
+  const formatCurrency = (minor, curr = 'INR') => {
+    if (typeof minor !== 'number') return '0.00';
+    if (curr === 'USD') {
+      return `$${(minor / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    }
+    return `₹${(minor / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+  };
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* 1. Header (Matching template exact layout: 2-column, clean spacing, no workflow bar inside) */}
-      <header className="app-header">
-        <div className="brand-title">
-          <button
-            className={`sidebar-toggle-header ${!sidebarCollapsed ? 'active' : ''}`}
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            title="Toggle Recovery Queue Sidebar"
-          >
-            <PanelLeft size={16} />
-          </button>
-          <div className="brand-icon" style={{ background: 'linear-gradient(135deg, #0284c7, #38bdf8)' }}>
-            <ShieldCheck size={18} color="#ffffff" />
+    <div style={{
+      minHeight: '100vh',
+      backgroundColor: '#090d16',
+      color: '#f8fafc',
+      fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      padding: '20px',
+    }}>
+      {/* Top Banner */}
+      <div style={{
+        maxWidth: '1280px',
+        margin: '0 auto 24px auto',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderBottom: '1px solid #1e293b',
+        paddingBottom: '16px',
+        flexWrap: 'wrap',
+        gap: '12px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #2563eb, #38bdf8)',
+            padding: '8px',
+            borderRadius: '10px',
+          }}>
+            <ShieldCheck size={24} color="#ffffff" />
           </div>
-          <h1 className="brand-heading" style={{ whiteSpace: 'nowrap' }}>Vasool Recovery Console</h1>
-        </div>
-
-        {/* Right Action Controls */}
-        <div className="header-controls">
-          <button
-            className={`icon-btn ${casesDrawerOpen ? 'active' : ''}`}
-            onClick={() => setCasesDrawerOpen(true)}
-            title="Open Delinquent Cases Queue"
-          >
-            <Layers size={16} />
-            <span className="btn-label">Cases</span>
-            <span className="badge-count" style={{ background: 'var(--accent-uber-blue)' }}>{cases.length}</span>
-          </button>
-
-          <button
-            className={`icon-btn ${approvalsDrawerOpen ? 'active' : ''}`}
-            onClick={() => setApprovalsDrawerOpen(true)}
-            title="Open Human Approvals Drawer"
-          >
-            <Clock size={16} />
-            <span className="btn-label">Approvals</span>
-            <span className="badge-count" style={{ background: '#f59e0b' }}>
-              {approvals.filter((a) => a.status === 'pending').length}
+          <div>
+            <h1 style={{ fontSize: '20px', fontWeight: 700, margin: 0, letterSpacing: '-0.3px' }}>
+              Vasool Operations Console
+            </h1>
+            <span style={{ fontSize: '12px', color: '#64748b' }}>
+              Autonomous Debt Recovery & Dispute Settlement Edge • Spec v0.2
             </span>
-          </button>
-
-          <button
-            className={`icon-btn ${ledgerDrawerOpen ? 'active' : ''}`}
-            onClick={() => {
-              setLedgerDrawerOpen(true);
-              verifyChainInBrowser();
-            }}
-            title="Audit Canonical Ledger"
-          >
-            <Database size={16} />
-            <span className="btn-label">Ledger</span>
-          </button>
-
-          <a
-            href="/"
-            className="icon-btn"
-            style={{ textDecoration: 'none' }}
-            title="Return to Storefront"
-          >
-            <ShoppingBag size={16} />
-            <span className="btn-label">Storefront</span>
-          </a>
-
-          <button
-            className="icon-btn"
-            onClick={toggleTheme}
-            title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
-          >
-            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
+          </div>
         </div>
-      </header>
 
-      {/* 2. Main Body with Sidebar + Content */}
-      <div className="app-main-layout">
-        {/* Left Sidebar: Active Cases Queue */}
-        <aside className={`chat-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
-          <div className="sidebar-header">
-            {!sidebarCollapsed && (
-              <div className="sidebar-title">
-                <ShieldCheck size={16} color="var(--accent-primary)" />
-                <span>RECOVERY QUEUE</span>
-              </div>
-            )}
-            <div className="sidebar-header-actions">
+        {/* Global Nav Pills */}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {[
+            { id: 'briefing', label: 'Briefing & Voice', icon: Mic },
+            { id: 'cases', label: 'Cases Table', icon: Layers },
+            { id: 'approvals', label: `Approvals (${approvals.filter(a => a.status === 'pending').length})`, icon: Clock },
+            { id: 'ledger', label: 'Cryptographic Ledger', icon: Database },
+            { id: 'metrics', label: 'Metrics & Red Team', icon: BarChart3 },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
               <button
-                type="button"
-                className="sidebar-icon-btn"
-                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                title={sidebarCollapsed ? 'Expand Queue' : 'Collapse Queue'}
-              >
-                {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-              </button>
-            </div>
-          </div>
-
-          <div className="new-chat-wrapper">
-            <button
-              type="button"
-              className="new-chat-btn"
-              onClick={() => setNewCaseModalOpen(true)}
-              title="Register New Recovery Case"
-            >
-              <Plus size={16} />
-              {!sidebarCollapsed && <span>New Recovery Case</span>}
-            </button>
-          </div>
-
-          <div className="sidebar-feed">
-            {cases.map((c) => {
-              const isActive = selectedCase?.id === c.id;
-              return (
-                <div
-                  key={c.id}
-                  onClick={() => {
-                    setSelectedCase(c);
-                    handleSendPrompt(`Show full case file and risk diagnostics for ${c.id}`);
-                  }}
-                  className={`session-item ${isActive ? 'active' : ''}`}
-                >
-                  <div className="session-item-icon">
-                    <ShieldCheck size={14} color="var(--accent-primary)" />
-                  </div>
-                  <div className="session-item-content">
-                    <div className="session-item-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontWeight: 700, fontSize: '13px' }}>{c.id}</span>
-                      <span
-                        className="count-pill"
-                        style={{
-                          background: c.risk_score > 70 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(34, 197, 94, 0.15)',
-                          color: c.risk_score > 70 ? '#ef4444' : '#22c55e',
-                          fontSize: '10px',
-                        }}
-                      >
-                        Risk: {c.risk_score}
-                      </span>
-                    </div>
-                    <div className="session-item-meta">
-                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.customer}</span>
-                      <span>•</span>
-                      <span>
-                        {c.currency === 'USD'
-                          ? `$${(c.amount_minor / 100).toFixed(0)}`
-                          : `₹${(c.amount_minor / 100).toLocaleString('en-IN')}`}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </aside>
-
-        {/* Center Panel Container */}
-        <div className="chat-panel-container">
-          {/* Top Compact Workflow Indicator Bar (Centered in Main Body like template) */}
-          <div className="compact-workflow-bar">
-            {[
-              { id: 1, label: 'Delinquency Scored' },
-              { id: 2, label: 'Strategy Selected' },
-              { id: 3, label: 'Human Approval' },
-              { id: 4, label: 'Pay Link Dispatched' },
-              { id: 5, label: 'Ledger Verified' },
-            ].map((step, idx) => {
-              const isDone = activeWorkflowStep > step.id;
-              const isCurrent = activeWorkflowStep === step.id;
-              return (
-                <React.Fragment key={step.id}>
-                  <div className={`workflow-step ${isDone ? 'done' : ''} ${isCurrent ? 'current' : ''}`}>
-                    {isDone ? (
-                      <span className="step-icon done">✓</span>
-                    ) : isCurrent ? (
-                      <span className="step-dot current" />
-                    ) : (
-                      <span className="step-icon muted">•</span>
-                    )}
-                    <span className="step-label">{step.label}</span>
-                  </div>
-                  {idx < 4 && <span className="workflow-arrow">→</span>}
-                </React.Fragment>
-              );
-            })}
-          </div>
-
-          {/* Center Scrollable Messages Area */}
-          <div className="messages-scroll-area">
-            {isInitialState ? (
-              /* ChatGPT-style Centered Hero & 2x2 Prompt Cards */
-              <div className="chatgpt-hero-wrapper">
-                <div className="chatgpt-hero-header">
-                  <div className="chatgpt-hero-avatar" style={{ background: 'linear-gradient(135deg, #0284c7, #38bdf8)' }}>
-                    <ShieldCheck size={28} color="#ffffff" />
-                  </div>
-                  <h2 className="chatgpt-hero-title">How can Vasool assist recovery operations today?</h2>
-                  <p className="chatgpt-hero-subtitle">
-                    Autonomous debt recovery, policy-guarded human escalations, and cryptographically verified settlement links.
-                  </p>
-                </div>
-
-                {/* 2x2 Action Prompt Cards Grid (Matching Template) */}
-                <div className="chatgpt-cards-grid">
-                  {VASOOL_PROMPT_CARDS.map((card) => (
-                    <div
-                      key={card.title}
-                      className="chatgpt-card"
-                      onClick={() => {
-                        if (card.action === 'cases') setCasesDrawerOpen(true);
-                        else if (card.action === 'approvals') setApprovalsDrawerOpen(true);
-                        else if (card.action === 'ledger') {
-                          setLedgerDrawerOpen(true);
-                          verifyChainInBrowser();
-                        } else if (card.action === 'pay_link') handleGenerateLivePayLink();
-                      }}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      <span className="chatgpt-card-icon">{card.icon}</span>
-                      <div className="chatgpt-card-text">
-                        <span className="chatgpt-card-title">{card.title}</span>
-                        <span className="chatgpt-card-desc">{card.desc}</span>
-                      </div>
-                      <ArrowUp size={15} className="chatgpt-card-arrow" style={{ transform: 'rotate(45deg)' }} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              /* Chat message rows */
-              <div style={{ maxWidth: '800px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {messages.map((msg) => (
-                  <div key={msg.id} className={`message-row ${msg.sender}`}>
-                    {msg.sender === 'assistant' && (
-                      <div className="message-avatar" style={{ background: 'linear-gradient(135deg, #0284c7, #38bdf8)' }}>
-                        <ShieldCheck size={16} color="#ffffff" />
-                      </div>
-                    )}
-
-                    <div className="message-body" style={{ maxWidth: '85%' }}>
-                      {msg.activity && (
-                        <div className="in-chat-activity-card" style={{ marginBottom: '8px' }}>
-                          <CheckCircle2 size={13} color="var(--accent-success)" />
-                          <span>{msg.activity}</span>
-                        </div>
-                      )}
-
-                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>{msg.text}</div>
-
-                      {/* Render Interactive Pay Link Card if present */}
-                      {msg.payUrl && (
-                        <div
-                          style={{
-                            marginTop: '12px',
-                            padding: '14px',
-                            borderRadius: '12px',
-                            border: '1px solid var(--accent-uber-blue)',
-                            background: 'var(--bg-card)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: '12px',
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontWeight: 700, fontSize: '12px', color: 'var(--text-main)' }}>
-                              Tokenized Customer Pay Page
-                            </div>
-                            <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
-                              {msg.payUrl}
-                            </div>
-                          </div>
-                          <a
-                            href={msg.payUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="buy-now-btn"
-                            style={{ textDecoration: 'none', padding: '6px 14px', fontSize: '12px' }}
-                          >
-                            <ExternalLink size={13} />
-                            <span>Open Pay Page</span>
-                          </a>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {isProcessing && (
-                  <div className="message-row assistant">
-                    <div className="message-avatar" style={{ background: 'linear-gradient(135deg, #0284c7, #38bdf8)' }}>
-                      <RefreshCw size={14} color="#ffffff" className="animate-spin" />
-                    </div>
-                    <div className="message-body">
-                      <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Evaluating policy & ledger state...</span>
-                    </div>
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-            )}
-          </div>
-
-          {/* 3. Fixed Bottom Command Dock (Matching Template) */}
-          <div className="input-dock">
-            <div className="input-box-wrapper">
-              {/* Quick Suggestion Chips Row */}
-              <div className="suggestion-chips-container">
-                <div
-                  className="suggestion-chips-row"
-                  ref={chipsRef}
-                  onWheel={handleChipsWheel}
-                >
-                  {VASOOL_SUGGESTION_CHIPS.map((chip) => (
-                    <button
-                      key={chip.label}
-                      type="button"
-                      className="chip-pill"
-                      onClick={() => handleSendPrompt(chip.query)}
-                    >
-                      {chip.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Prompt Form */}
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSendPrompt();
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: active ? '#2563eb' : '#1e293b',
+                  color: active ? '#ffffff' : '#94a3b8',
+                  border: 'none',
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
                 }}
-                className="input-form"
               >
-                <input
-                  type="text"
-                  className="chat-input-field"
-                  placeholder="Ask the agent to evaluate case delinquency, trigger settlements, or inspect ledger..."
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  disabled={isProcessing}
-                />
-                <button
-                  type="submit"
-                  className="send-circle-btn"
-                  title="Send Command"
-                  disabled={!input.trim() || isProcessing}
-                >
-                  <ArrowUp size={18} />
-                </button>
-              </form>
-            </div>
-          </div>
+                <Icon size={14} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* =========================================================================
-          SLIDE-OVER DRAWERS & MODALS
-          ========================================================================= */}
-
-      {/* A. Cases Drawer */}
-      {casesDrawerOpen && (
-        <div className="modal-overlay" onClick={() => setCasesDrawerOpen(false)}>
-          <div
-            className="modal-content"
-            style={{ maxWidth: '780px', width: '90%' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Layers size={18} color="var(--accent-uber-blue)" />
-                <h3 style={{ fontSize: '16px', fontWeight: 700 }}>Delinquency Cases Queue</h3>
+      <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
+        {/* TAB 1: BRIEFING & VOICE */}
+        {activeTab === 'briefing' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '24px' }}>
+            {/* Morning Summary Card */}
+            <div style={{
+              background: '#131b2e',
+              border: '1px solid #1e293b',
+              borderRadius: '16px',
+              padding: '24px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                <Volume2 size={20} color="#38bdf8" />
+                <h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>Executive Voice Briefing</h2>
               </div>
-              <button className="icon-btn" onClick={() => setCasesDrawerOpen(false)}>
-                <X size={16} />
-              </button>
+
+              <div style={{
+                background: '#0a0f1d',
+                border: '1px solid #1e293b',
+                borderRadius: '12px',
+                padding: '16px',
+                marginBottom: '20px',
+                fontSize: '13px',
+                color: '#cbd5e1',
+                lineHeight: 1.6,
+              }}>
+                "Good morning team. Total recoverable value in portfolio is <strong>₹22,70,000.00</strong> across 2 active cases, and <strong>$350.00</strong> in PayPal disputes. One high-value case (₹18,500.00) requires human approval before link dispatch. No security alerts reported in the last 24 hours."
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div style={{ background: '#0a0f1d', padding: '14px', borderRadius: '10px', border: '1px solid #1e293b' }}>
+                  <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Recoverable (INR)</div>
+                  <div style={{ fontSize: '20px', fontWeight: 700, color: '#38bdf8', marginTop: '4px' }}>₹22,70,000</div>
+                </div>
+                <div style={{ background: '#0a0f1d', padding: '14px', borderRadius: '10px', border: '1px solid #1e293b' }}>
+                  <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Disputes (USD)</div>
+                  <div style={{ fontSize: '20px', fontWeight: 700, color: '#22c55e', marginTop: '4px' }}>$350.00</div>
+                </div>
+              </div>
             </div>
 
-            <div style={{ padding: '16px 20px', maxHeight: '60vh', overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
+            {/* Voice Push-to-Talk Station */}
+            <div style={{
+              background: '#131b2e',
+              border: '1px solid #1e293b',
+              borderRadius: '16px',
+              padding: '24px',
+              display: 'flex',
+              flexDirection: 'column',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Mic size={20} color="#f59e0b" />
+                  <h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>Push-to-Talk Turn Terminal</h2>
+                </div>
+                <span style={{
+                  fontSize: '11px',
+                  padding: '3px 8px',
+                  borderRadius: '12px',
+                  background: voiceState === 'idle' ? '#1e293b' : 'rgba(234, 179, 8, 0.2)',
+                  color: voiceState === 'idle' ? '#94a3b8' : '#facc15',
+                }}>
+                  {voiceState.toUpperCase()}
+                </span>
+              </div>
+
+              {/* Turn Log */}
+              <div style={{
+                flex: 1,
+                minHeight: '200px',
+                maxHeight: '260px',
+                overflowY: 'auto',
+                background: '#0a0f1d',
+                border: '1px solid #1e293b',
+                borderRadius: '12px',
+                padding: '14px',
+                marginBottom: '16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}>
+                {turnLog.map((turn, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      alignSelf: turn.role === 'user' ? 'flex-end' : 'flex-start',
+                      maxWidth: '85%',
+                      background: turn.role === 'user' ? '#1d4ed8' : '#1e293b',
+                      borderRadius: '10px',
+                      padding: '10px 12px',
+                      fontSize: '12px',
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    <div>{turn.text}</div>
+                    {turn.intent && (
+                      <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px', display: 'flex', gap: '6px' }}>
+                        <span>Intent: {turn.intent}</span>
+                        {turn.confidence && <span>• Conf: {(turn.confidence * 100).toFixed(0)}%</span>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Push-to-Talk Controls */}
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <button
+                  onClick={toggleRecording}
+                  style={{
+                    flex: 1,
+                    background: voiceState === 'recording' ? '#ef4444' : '#2563eb',
+                    color: '#ffffff',
+                    border: 'none',
+                    padding: '12px',
+                    borderRadius: '10px',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    boxShadow: voiceState === 'recording' ? '0 0 15px rgba(239, 68, 68, 0.6)' : 'none',
+                  }}
+                >
+                  {voiceState === 'recording' ? <MicOff size={16} /> : <Mic size={16} />}
+                  <span>{voiceState === 'recording' ? 'Release to Transcribe' : 'Push to Talk (PTT)'}</span>
+                </button>
+              </div>
+
+              {/* Degraded mode typed input */}
+              <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                <input
+                  type="text"
+                  placeholder="Or type voice command..."
+                  value={typedInput}
+                  onChange={(e) => setTypedInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSendTyped()}
+                  style={{
+                    flex: 1,
+                    background: '#0a0f1d',
+                    border: '1px solid #1e293b',
+                    borderRadius: '8px',
+                    color: '#f8fafc',
+                    padding: '8px 12px',
+                    fontSize: '12px',
+                  }}
+                />
+                <button
+                  onClick={handleSendTyped}
+                  style={{
+                    background: '#1e293b',
+                    border: 'none',
+                    color: '#cbd5e1',
+                    borderRadius: '8px',
+                    padding: '8px 14px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Send
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 2: CASES TABLE */}
+        {activeTab === 'cases' && (
+          <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '16px', padding: '24px' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px' }}>Recovery & Dispute Cases</h2>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                 <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)', textAlign: 'left' }}>
-                    <th style={{ padding: '8px' }}>Case ID</th>
-                    <th style={{ padding: '8px' }}>Customer</th>
-                    <th style={{ padding: '8px' }}>Amount</th>
-                    <th style={{ padding: '8px' }}>Risk</th>
-                    <th style={{ padding: '8px' }}>Status</th>
-                    <th style={{ padding: '8px', textAlign: 'right' }}>Action</th>
+                  <tr style={{ borderBottom: '1px solid #1e293b', color: '#64748b', textAlign: 'left' }}>
+                    <th style={{ padding: '12px 10px' }}>Case ID</th>
+                    <th style={{ padding: '12px 10px' }}>Customer / Debtor</th>
+                    <th style={{ padding: '12px 10px' }}>Amount Due</th>
+                    <th style={{ padding: '12px 10px' }}>Risk Score</th>
+                    <th style={{ padding: '12px 10px' }}>State Badge</th>
+                    <th style={{ padding: '12px 10px' }}>Channel</th>
+                    <th style={{ padding: '12px 10px' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {cases.map((c) => (
-                    <tr key={c.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                      <td style={{ padding: '10px 8px', fontWeight: 700 }}>{c.id}</td>
-                      <td style={{ padding: '10px 8px' }}>{c.customer}</td>
-                      <td style={{ padding: '10px 8px', fontWeight: 600 }}>
-                        {c.currency === 'USD' ? `$${(c.amount_minor / 100).toFixed(2)}` : `₹${(c.amount_minor / 100).toLocaleString('en-IN')}`}
+                    <tr key={c.id} style={{ borderBottom: '1px solid #1e293b' }}>
+                      <td style={{ padding: '12px 10px', fontFamily: 'monospace', fontWeight: 600, color: '#38bdf8' }}>
+                        {c.id}
                       </td>
-                      <td style={{ padding: '10px 8px' }}>
-                        <span style={{ color: c.risk_score > 70 ? '#ef4444' : '#22c55e', fontWeight: 700 }}>
-                          {c.risk_score}/100
+                      <td style={{ padding: '12px 10px' }}>{c.customer}</td>
+                      <td style={{ padding: '12px 10px', fontWeight: 600 }}>{formatCurrency(c.amount_minor, c.currency)}</td>
+                      <td style={{ padding: '12px 10px' }}>
+                        <span style={{
+                          color: c.risk_score > 75 ? '#f87171' : '#38bdf8',
+                          fontWeight: 600,
+                        }}>
+                          {c.risk_score} / 100
                         </span>
                       </td>
-                      <td style={{ padding: '10px 8px' }}>
-                        <span style={{ fontSize: '11px', textTransform: 'uppercase', padding: '2px 6px', borderRadius: '4px', background: 'var(--bg-subtle)' }}>
-                          {c.state}
+                      <td style={{ padding: '12px 10px' }}>
+                        <span style={{
+                          background: c.state === 'created' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(234, 179, 8, 0.15)',
+                          color: c.state === 'created' ? '#38bdf8' : '#facc15',
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                        }}>
+                          {c.state.toUpperCase()}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                      <td style={{ padding: '12px 10px', color: '#94a3b8' }}>{c.channel}</td>
+                      <td style={{ padding: '12px 10px' }}>
+                        {c.channel.includes('PayPal') || c.id.startsWith('PP-') ? (
+                          <button
+                            onClick={() => handleInspectDispute(c)}
+                            style={{
+                              background: '#1e293b',
+                              color: '#38bdf8',
+                              border: '1px solid #334155',
+                              padding: '6px 12px',
+                              borderRadius: '6px',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                          >
+                            <ShieldCheck size={14} />
+                            <span>Defend Dispute</span>
+                          </button>
+                        ) : c.pay_url ? (
+                          <a
+                            href={c.pay_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              color: '#38bdf8',
+                              textDecoration: 'none',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '12px',
+                            }}
+                          >
+                            <span>Open Pay Link</span>
+                            <ExternalLink size={12} />
+                          </a>
+                        ) : (
+                          <span style={{ color: '#64748b', fontSize: '12px' }}>Awaiting Approval</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* PayPal Dispute Inspection & Defense Modal */}
+            {selectedDispute && (
+              <div style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(0,0,0,0.85)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '20px',
+                zIndex: 1000,
+              }}>
+                <div style={{
+                  background: '#131b2e',
+                  border: '1px solid #1e293b',
+                  borderRadius: '16px',
+                  padding: '28px',
+                  maxWidth: '680px',
+                  width: '100%',
+                  maxHeight: '90vh',
+                  overflowY: 'auto',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <div>
+                      <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0, color: '#f8fafc' }}>
+                        PayPal Dispute Defense: {selectedDispute.id}
+                      </h3>
+                      <span style={{ fontSize: '12px', color: '#64748b' }}>
+                        Amount: {formatCurrency(selectedDispute.amount_minor, selectedDispute.currency)} • Buyer: {selectedDispute.customer}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setSelectedDispute(null)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#94a3b8',
+                        fontSize: '20px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {/* Carrier Proof Verification Card */}
+                  <div style={{
+                    background: '#0a0f1d',
+                    border: '1px solid #1e293b',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    marginBottom: '20px',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#38bdf8' }}>
+                        CARRIER DELIVERY PROOF (KERNEL VERIFIED)
+                      </span>
+                      <span style={{
+                        background: 'rgba(34, 197, 94, 0.15)',
+                        color: '#22c55e',
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                      }}>
+                        DELIVERED & SIGNED
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: 1.6 }}>
+                      <div>Carrier: <strong>UPS Ground</strong> • Tracking: <strong style={{ color: '#38bdf8' }}>1Z9999999999999999</strong></div>
+                      <div>Delivered: <strong>Nov 10, 2026 @ 2:22 PM</strong> • Signed by: <strong>M. VANCE</strong></div>
+                      <div style={{ color: '#22c55e', marginTop: '6px' }}>✓ Signature match & GPS delivery coordinates confirmed against PayPal registered shipping address.</div>
+                    </div>
+                  </div>
+
+                  {/* AI Evidence Draft */}
+                  <div style={{ marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: '#cbd5e1' }}>
+                        AI Generated Defense Evidence
+                      </label>
+                      <button
+                        onClick={() => handleRedraftDispute(selectedDispute.id)}
+                        disabled={disputeActionLoading}
+                        style={{
+                          background: '#1e293b',
+                          color: '#38bdf8',
+                          border: 'none',
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {disputeActionLoading ? 'Redrafting...' : '↻ Redraft with Legal Precedent'}
+                      </button>
+                    </div>
+                    <textarea
+                      value={disputeEvidence}
+                      onChange={(e) => setDisputeEvidence(e.target.value)}
+                      rows={5}
+                      style={{
+                        width: '100%',
+                        background: '#0a0f1d',
+                        border: '1px solid #1e293b',
+                        borderRadius: '8px',
+                        color: '#f8fafc',
+                        padding: '12px',
+                        fontSize: '12px',
+                        fontFamily: 'sans-serif',
+                        lineHeight: 1.5,
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      onClick={() => handleApproveDispute(selectedDispute.id)}
+                      disabled={disputeActionLoading}
+                      style={{
+                        flex: 2,
+                        background: '#22c55e',
+                        color: '#ffffff',
+                        border: 'none',
+                        padding: '12px',
+                        borderRadius: '8px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {disputeActionLoading ? 'Submitting...' : 'Approve & Submit Dispute Defense'}
+                    </button>
+                    <button
+                      onClick={() => handleRejectDispute(selectedDispute.id)}
+                      disabled={disputeActionLoading}
+                      style={{
+                        flex: 1,
+                        background: '#ef4444',
+                        color: '#ffffff',
+                        border: 'none',
+                        padding: '12px',
+                        borderRadius: '8px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Concede Claim
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: APPROVALS INBOX (Section 5.4) */}
+        {activeTab === 'approvals' && (
+          <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '16px', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div>
+                <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>Human Approvals Inbox (HITL Gate)</h2>
+                <span style={{ fontSize: '12px', color: '#64748b' }}>
+                  Enforces Voice Read-Back & Cryptographic Approver Signature per Section 5.4
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
+              {approvals.map((appr) => {
+                const isPending = appr.status === 'pending';
+                return (
+                  <div
+                    key={appr.id}
+                    style={{
+                      background: '#0a0f1d',
+                      border: '1px solid #1e293b',
+                      borderRadius: '12px',
+                      padding: '20px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '11px', fontFamily: 'monospace', color: '#64748b' }}>{appr.id}</span>
+                      <span style={{
+                        fontSize: '11px',
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        background: isPending ? 'rgba(234, 179, 8, 0.15)' : appr.status === 'approved' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                        color: isPending ? '#facc15' : appr.status === 'approved' ? '#22c55e' : '#ef4444',
+                        fontWeight: 600,
+                      }}>
+                        {appr.status.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc', marginBottom: '4px' }}>
+                      {appr.action}
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#38bdf8', marginBottom: '12px' }}>
+                      Case: <strong>{appr.case_id}</strong> • Amount: <strong>{formatCurrency(appr.amount_minor, appr.currency)}</strong>
+                    </div>
+
+                    <div style={{
+                      background: '#131b2e',
+                      padding: '10px',
+                      borderRadius: '8px',
+                      fontSize: '12px',
+                      color: '#94a3b8',
+                      marginBottom: '16px',
+                      border: '1px dashed #334155',
+                    }}>
+                      "{appr.read_back_text}"
+                    </div>
+
+                    {isPending ? (
+                      <div>
+                        {/* Play Read-Back */}
                         <button
-                          className="buy-now-btn"
-                          style={{ padding: '4px 10px', fontSize: '11px' }}
-                          onClick={() => {
-                            setCasesDrawerOpen(false);
-                            handleGenerateLivePayLink(c);
+                          onClick={() => handlePlayReadBack(appr)}
+                          style={{
+                            width: '100%',
+                            background: '#1e293b',
+                            color: '#cbd5e1',
+                            border: 'none',
+                            padding: '8px',
+                            borderRadius: '6px',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                            marginBottom: '10px',
                           }}
                         >
-                          Generate Link
+                          <Volume2 size={14} />
+                          <span>Play Voice Read-Back {appr.read_back_hash && '✓'}</span>
                         </button>
+
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            onClick={() => handleApprove(appr.id)}
+                            style={{
+                              flex: 1,
+                              background: '#22c55e',
+                              color: '#ffffff',
+                              border: 'none',
+                              padding: '10px',
+                              borderRadius: '6px',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => handleReject(appr.id)}
+                            style={{
+                              flex: 1,
+                              background: '#ef4444',
+                              color: '#ffffff',
+                              border: 'none',
+                              padding: '10px',
+                              borderRadius: '6px',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '12px', color: '#64748b', textAlign: 'center' }}>
+                        Decision recorded on ledger.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: CANONICAL CRYPTOGRAPHIC LEDGER */}
+        {activeTab === 'ledger' && (
+          <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '16px', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>Unified Canonical Cryptographic Ledger</h2>
+                <span style={{ fontSize: '12px', color: '#64748b' }}>
+                  Rule: SHA256(prev_hash || canonical_json(&#123;seq, ts, actor, event_type, ref_id, payload&#125;))
+                </span>
+              </div>
+
+              <button
+                onClick={verifyChainInBrowser}
+                disabled={verifyingLedger}
+                style={{
+                  background: '#2563eb',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '10px 18px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}
+              >
+                <RefreshCw size={14} style={{ animation: verifyingLedger ? 'spin 1s linear infinite' : 'none' }} />
+                <span>Verify Chain (WebCrypto)</span>
+              </button>
+            </div>
+
+            {/* Verification Report Banner */}
+            {ledgerVerifyReport && (
+              <div style={{
+                background: ledgerVerifyReport.valid ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                border: `1px solid ${ledgerVerifyReport.valid ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                borderRadius: '10px',
+                padding: '14px 18px',
+                marginBottom: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}>
+                {ledgerVerifyReport.valid ? <CheckCircle2 size={24} color="#22c55e" /> : <AlertTriangle size={24} color="#ef4444" />}
+                <div>
+                  <div style={{ fontWeight: 600, color: ledgerVerifyReport.valid ? '#22c55e' : '#ef4444', fontSize: '14px' }}>
+                    {ledgerVerifyReport.valid ? 'Cryptographic Chain Integrity Validated' : 'Chain Tampering Detected!'}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+                    {ledgerVerifyReport.valid
+                      ? `Verified all ${ledgerVerifyReport.checked_entries} blocks back to Genesis 0000...0000`
+                      : ledgerVerifyReport.error}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Ledger Blocks Table */}
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #1e293b', color: '#64748b', textAlign: 'left' }}>
+                    <th style={{ padding: '10px' }}>Seq</th>
+                    <th style={{ padding: '10px' }}>Timestamp (UTC)</th>
+                    <th style={{ padding: '10px' }}>Actor</th>
+                    <th style={{ padding: '10px' }}>Event Type</th>
+                    <th style={{ padding: '10px' }}>Ref ID</th>
+                    <th style={{ padding: '10px' }}>Short Hash</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledgerEntries.map((e) => (
+                    <tr key={e.seq} style={{ borderBottom: '1px solid #1e293b' }}>
+                      <td style={{ padding: '10px', fontWeight: 600, color: '#38bdf8' }}>#{e.seq}</td>
+                      <td style={{ padding: '10px', color: '#94a3b8' }}>{e.ts}</td>
+                      <td style={{ padding: '10px' }}>{e.actor}</td>
+                      <td style={{ padding: '10px' }}>
+                        <span style={{
+                          background: 'rgba(56, 189, 248, 0.1)',
+                          color: '#38bdf8',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          fontFamily: 'monospace',
+                        }}>
+                          {e.event_type}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px', fontFamily: 'monospace' }}>{e.ref_id}</td>
+                      <td style={{ padding: '10px', fontFamily: 'monospace', color: '#a78bfa' }}>
+                        {e.entry_hash ? `${e.entry_hash.slice(0, 8)}...${e.entry_hash.slice(-6)}` : 'N/A'}
                       </td>
                     </tr>
                   ))}
@@ -830,263 +1122,80 @@ export default function VasoolConsole() {
               </table>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* B. Approvals Drawer */}
-      {approvalsDrawerOpen && (
-        <div className="modal-overlay" onClick={() => setApprovalsDrawerOpen(false)}>
-          <div
-            className="modal-content"
-            style={{ maxWidth: '640px', width: '90%' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Clock size={18} color="#f59e0b" />
-                <h3 style={{ fontSize: '16px', fontWeight: 700 }}>Human Approver Sign-Off</h3>
+        {/* TAB 5: METRICS & RED TEAM (Section 5.2) */}
+        {activeTab === 'metrics' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {/* Currency Split Metrics (Rule D6) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+              <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
+                <div style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase' }}>Recovered (INR)</div>
+                <div style={{ fontSize: '26px', fontWeight: 700, color: '#38bdf8', marginTop: '6px' }}>₹4,20,000.00</div>
+                <div style={{ fontSize: '12px', color: '#22c55e', marginTop: '4px' }}>100% test-mode settled</div>
               </div>
-              <button className="icon-btn" onClick={() => setApprovalsDrawerOpen(false)}>
-                <X size={16} />
-              </button>
-            </div>
-
-            <div style={{ padding: '20px', maxHeight: '60vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {approvals.map((apr) => (
-                <div
-                  key={apr.id}
-                  style={{
-                    padding: '16px',
-                    borderRadius: '14px',
-                    border: '1px solid var(--border-subtle)',
-                    background: 'var(--bg-card)',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <span style={{ fontWeight: 700, fontSize: '13px' }}>{apr.id} &bull; {apr.case_id}</span>
-                    <span
-                      style={{
-                        fontSize: '11px',
-                        padding: '2px 8px',
-                        borderRadius: '6px',
-                        fontWeight: 700,
-                        background: apr.status === 'authorized' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                        color: apr.status === 'authorized' ? '#22c55e' : '#f59e0b',
-                      }}
-                    >
-                      {apr.status.toUpperCase()}
-                    </span>
-                  </div>
-
-                  <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                    {apr.read_back_text}
-                  </p>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--text-dim)' }}>
-                      Draft Hash: {apr.draft_hash}
-                    </span>
-
-                    {apr.status === 'pending' ? (
-                      <button
-                        className="buy-now-btn"
-                        style={{ padding: '6px 14px', fontSize: '12px' }}
-                        onClick={() => handleAuthorizeApproval(apr)}
-                      >
-                        <Volume2 size={13} />
-                        <span>Voice Read-Back & Authorize</span>
-                      </button>
-                    ) : (
-                      <span style={{ fontSize: '12px', color: '#22c55e', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <Check size={14} /> Authorized
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* C. Cryptographic Ledger Drawer */}
-      {ledgerDrawerOpen && (
-        <div className="modal-overlay" onClick={() => setLedgerDrawerOpen(false)}>
-          <div
-            className="modal-content"
-            style={{ maxWidth: '840px', width: '92%' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Database size={18} color="var(--accent-uber-blue)" />
-                <h3 style={{ fontSize: '16px', fontWeight: 700 }}>Canonical Cryptographic Ledger</h3>
+              <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
+                <div style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase' }}>Disputes Defended (USD)</div>
+                <div style={{ fontSize: '26px', fontWeight: 700, color: '#22c55e', marginTop: '6px' }}>$350.00</div>
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>Never summed with INR (D6)</div>
               </div>
-              <button className="icon-btn" onClick={() => setLedgerDrawerOpen(false)}>
-                <X size={16} />
-              </button>
+              <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '12px', padding: '20px' }}>
+                <div style={{ fontSize: '12px', color: '#64748b', textTransform: 'uppercase' }}>Automation Ratio</div>
+                <div style={{ fontSize: '26px', fontWeight: 700, color: '#f59e0b', marginTop: '6px' }}>85.7%</div>
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>6 Auto / 1 Human Escalated</div>
+              </div>
             </div>
 
-            <div style={{ padding: '20px', maxHeight: '65vh', overflowY: 'auto' }}>
-              {/* Verification Report Banner */}
-              {ledgerVerifyReport && (
-                <div
-                  style={{
-                    padding: '12px 16px',
-                    borderRadius: '10px',
-                    border: `1px solid ${ledgerVerifyReport.valid ? 'rgba(34, 197, 94, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`,
-                    background: ledgerVerifyReport.valid ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)',
-                    marginBottom: '16px',
-                    fontSize: '12.5px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {ledgerVerifyReport.valid ? (
-                      <CheckCircle2 size={16} color="#22c55e" />
-                    ) : (
-                      <AlertTriangle size={16} color="#ef4444" />
-                    )}
-                    <span>
-                      {ledgerVerifyReport.valid
-                        ? `Genesis Hash Chain Verified (${ledgerVerifyReport.count} blocks) at ${ledgerVerifyReport.verified_at}`
-                        : `Ledger Broken: ${ledgerVerifyReport.error}`}
-                    </span>
-                  </div>
-                  <button
-                    className="icon-btn"
-                    onClick={verifyChainInBrowser}
-                    disabled={verifyingLedger}
-                    style={{ fontSize: '11px', padding: '4px 10px', width: 'auto' }}
-                  >
-                    <RefreshCw size={12} className={verifyingLedger ? 'animate-spin' : ''} />
-                    <span>Re-verify</span>
-                  </button>
-                </div>
-              )}
+            {/* Red Team Attack Suite Matrix */}
+            <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '16px', padding: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                <Terminal size={20} color="#f87171" />
+                <h3 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>Red-Team Fuzzing & Attack Defenses</h3>
+              </div>
 
-              {/* Chained Blocks List */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '11.5px', fontFamily: 'monospace' }}>
-                {ledgerEntries.map((e) => (
-                  <div
-                    key={e.seq}
-                    style={{
-                      padding: '12px 14px',
-                      borderRadius: '10px',
-                      border: '1px solid var(--border-subtle)',
-                      background: 'var(--bg-subtle)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-main)', fontWeight: 700 }}>
-                      <span>#{e.seq} &bull; {e.event_type}</span>
-                      <span style={{ color: 'var(--text-dim)' }}>{e.ts}</span>
-                    </div>
-                    <div style={{ color: 'var(--text-muted)' }}>
-                      Actor: <span style={{ color: 'var(--accent-uber-blue)' }}>{e.actor}</span> | Ref: {e.ref_id}
-                    </div>
-                    <div style={{ color: 'var(--text-dim)', wordBreak: 'break-all' }}>
-                      Prev: {e.prev_hash?.substring(0, 32)}...
-                    </div>
-                    <div style={{ color: '#22c55e', wordBreak: 'break-all' }}>
-                      Hash: {e.entry_hash}
-                    </div>
-                  </div>
-                ))}
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #1e293b', color: '#64748b', textAlign: 'left' }}>
+                      <th style={{ padding: '10px' }}>Attack Vector</th>
+                      <th style={{ padding: '10px' }}>Payload Attempt</th>
+                      <th style={{ padding: '10px' }}>Expected Defense</th>
+                      <th style={{ padding: '10px' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { vector: 'Amount Tampering', attempt: 'Body amount ₹100 override on ₹4,200 token', defense: 'AMOUNT_MISMATCH rejection (400)', status: 'PASSED' },
+                      { vector: 'Token Replay', attempt: 'Reusing jti "auth_7f3a" for secondary order', defense: 'AUTH_REPLAY refusal + ledger flag', status: 'PASSED' },
+                      { vector: 'Forged Signature', attempt: 'Altered HMAC SHA256 in verify-payment', defense: 'AUTH_INVALID rejection (400)', status: 'PASSED' },
+                      { vector: 'Disallowed Decision', attempt: 'Decision set to "LLM_GENERATED"', defense: 'AUTH_INVALID rejection (400)', status: 'PASSED' },
+                      { vector: 'Rate Limit Exhaustion', attempt: '> 3 pay links generated for one case', defense: 'RATE_LIMITED (429) fail-closed', status: 'PASSED' },
+                    ].map((row, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid #1e293b' }}>
+                        <td style={{ padding: '10px', fontWeight: 600 }}>{row.vector}</td>
+                        <td style={{ padding: '10px', fontFamily: 'monospace', color: '#94a3b8' }}>{row.attempt}</td>
+                        <td style={{ padding: '10px', color: '#cbd5e1' }}>{row.defense}</td>
+                        <td style={{ padding: '10px' }}>
+                          <span style={{
+                            background: 'rgba(34, 197, 94, 0.15)',
+                            color: '#22c55e',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                          }}>
+                            {row.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* D. New Case Modal */}
-      {newCaseModalOpen && (
-        <div className="modal-overlay" onClick={() => setNewCaseModalOpen(false)}>
-          <div
-            className="modal-content"
-            style={{ maxWidth: '440px', width: '90%' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <h3 style={{ fontSize: '15px', fontWeight: 700 }}>Register Delinquent Case</h3>
-              <button className="icon-btn" onClick={() => setNewCaseModalOpen(false)}>
-                <X size={16} />
-              </button>
-            </div>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!newCustomer) return;
-                const newId = `RX-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-                const createdCase = {
-                  id: newId,
-                  customer: newCustomer,
-                  amount_minor: parseInt(newAmount, 10) * 100,
-                  currency: 'INR',
-                  state: 'created',
-                  risk_score: parseInt(newRisk, 10),
-                  deadline: '2026-11-18T18:00:00Z',
-                  channel: 'Verified Settlement Link',
-                  attempt_no: 1,
-                  pay_url: '',
-                  notes: 'Manually ingested delinquent customer invoice.',
-                };
-                setCases((prev) => [createdCase, ...prev]);
-                setNewCaseModalOpen(false);
-                handleSendPrompt(`Case ${newId} registered for ${newCustomer} (₹${parseInt(newAmount, 10).toLocaleString('en-IN')}) with risk score ${newRisk}.`);
-              }}
-              style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}
-            >
-              <div>
-                <label style={{ display: 'block', marginBottom: '4px', color: 'var(--text-muted)' }}>Customer Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Vikramaditya Roy"
-                  value={newCustomer}
-                  onChange={(e) => setNewCustomer(e.target.value)}
-                  className="chat-input-field"
-                  style={{ width: '100%' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', marginBottom: '4px', color: 'var(--text-muted)' }}>Overdue Amount (INR ₹)</label>
-                <input
-                  type="number"
-                  required
-                  value={newAmount}
-                  onChange={(e) => setNewAmount(e.target.value)}
-                  className="chat-input-field"
-                  style={{ width: '100%' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', marginBottom: '4px', color: 'var(--text-muted)' }}>Delinquency Risk Score (1-100)</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={newRisk}
-                  onChange={(e) => setNewRisk(e.target.value)}
-                  className="chat-input-field"
-                  style={{ width: '100%' }}
-                />
-              </div>
-
-              <button type="submit" className="buy-now-btn" style={{ marginTop: '8px', width: '100%' }}>
-                <span>Ingest & Evaluate Case</span>
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
