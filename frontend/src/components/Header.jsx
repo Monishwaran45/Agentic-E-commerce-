@@ -18,6 +18,8 @@ export default function Header({
   mobileSummaryOpen = false,
   onToggleMobileSummary,
   hasSelectedItem = false,
+  currentView = 'shop',
+  onSwitchView,
 }) {
   const [showSettings, setShowSettings] = useState(false);
   const spendPct = Math.min(100, Math.round((currentSpend / spendCap) * 100));
@@ -125,15 +127,17 @@ export default function Header({
           )}
         </button>
 
-        <a
-          href="/console"
-          className="icon-btn"
-          style={{ textDecoration: 'none', color: '#38bdf8' }}
-          title="Open Vasool Operations Console"
+        <button
+          className={`icon-btn ${currentView === 'console' ? 'active' : ''}`}
+          onClick={() => (onSwitchView ? onSwitchView(currentView === 'console' ? 'shop' : 'console') : (window.location.href = '/console'))}
+          style={{ color: '#38bdf8' }}
+          title={currentView === 'console' ? 'Back to E-Commerce Storefront' : 'Open Vasool Operations Console'}
         >
           <ShieldCheck size={16} color="#38bdf8" />
-          <span className="btn-label" style={{ color: '#38bdf8', fontWeight: 600 }}>Vasool Console</span>
-        </a>
+          <span className="btn-label" style={{ color: '#38bdf8', fontWeight: 600 }}>
+            {currentView === 'console' ? 'Shopping Agent' : 'Vasool Console'}
+          </span>
+        </button>
 
         <button
           className="icon-btn"

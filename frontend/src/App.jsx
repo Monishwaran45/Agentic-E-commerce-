@@ -94,13 +94,10 @@ export default function App() {
       </Suspense>
     );
   }
-  if (currentPath === '/console' || currentPath.startsWith('/console/')) {
-    return (
-      <Suspense fallback={<ViewLoader />}>
-        <VasoolConsole />
-      </Suspense>
-    );
-  }
+
+  const [currentView, setCurrentView] = useState(() => {
+    return currentPath === '/console' || currentPath.startsWith('/console/') ? 'console' : 'shop';
+  });
 
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem('theme_pref') || 'dark';
@@ -465,6 +462,39 @@ export default function App() {
 
   const currentSpend = selectedProduct ? (selectedProduct.price || 0) * selectedQty : 0;
 
+  const handleSwitchView = (view) => {
+    setCurrentView(view);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', view === 'console' ? '/console' : '/');
+    }
+  };
+
+  if (currentView === 'console') {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <Header
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          backendConnected={backendConnected}
+          spendCap={10000}
+          currentSpend={currentSpend}
+          auditOpen={auditOpen}
+          onToggleAudit={() => setAuditOpen(!auditOpen)}
+          catalogOpen={catalogOpen}
+          onToggleCatalog={() => setCatalogOpen(!catalogOpen)}
+          blockedCount={blockedCount}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+          currentView="console"
+          onSwitchView={handleSwitchView}
+        />
+        <Suspense fallback={<ViewLoader />}>
+          <VasoolConsole onBackToStorefront={() => handleSwitchView('shop')} />
+        </Suspense>
+      </div>
+    );
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Header
@@ -491,6 +521,8 @@ export default function App() {
         mobileSummaryOpen={mobileSummaryOpen}
         onToggleMobileSummary={() => setMobileSummaryOpen(!mobileSummaryOpen)}
         hasSelectedItem={!!selectedProduct}
+        currentView={currentView}
+        onSwitchView={handleSwitchView}
       />
 
       <div className="app-main-layout">

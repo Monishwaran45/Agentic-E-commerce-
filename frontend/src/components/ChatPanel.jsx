@@ -12,6 +12,9 @@ import {
   ChevronRight,
   RefreshCw,
   Scale,
+  Mic,
+  MicOff,
+  Volume2,
 } from 'lucide-react';
 import AgentWorkflowBar from './AgentWorkflowBar';
 import ComparisonMatrixModal from './ComparisonMatrixModal';
@@ -153,10 +156,106 @@ export default function ChatPanel({
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [comparisonModalItems, setComparisonModalItems] = useState(null);
+  const [isListening, setIsListening] = useState(false);
+  const [playingMsgId, setPlayingMsgId] = useState(null);
+  const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
   const chipsRef = useRef(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
+
+  // Play assistant voice response via Gnani Timbre TTS
+  const handleSpeakMessage = async (msgId, text) => {
+    if (!text) return;
+    setPlayingMsgId(msgId);
+    try {
+      const res = await fetch('/api/voice/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, language: 'en' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.audio_base64 && data.audio_base64.length > 50) {
+          const audio = new Audio(`data:audio/wav;base64,${data.audio_base64}`);
+          audio.onended = () => setPlayingMsgId(null);
+          audio.play().catch(() => {
+            if ('speechSynthesis' in window) {
+              const utter = new SpeechSynthesisUtterance(text);
+              utter.onend = () => setPlayingMsgId(null);
+              window.speechSynthesis.speak(utter);
+            } else {
+              setPlayingMsgId(null);
+            }
+          });
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Gnani TTS notice:', e);
+    }
+    if ('speechSynthesis' in window) {
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.onend = () => setPlayingMsgId(null);
+      window.speechSynthesis.speak(utter);
+    } else {
+      setPlayingMsgId(null);
+    }
+  };
+
+  // Toggle voice listening via Web Speech API or Gnani ASR turn
+  const toggleVoiceListening = () => {
+    if (isListening) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+      }
+      setIsListening(false);
+      return;
+    }
+
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const rec = new SpeechRec();
+      rec.continuous = false;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+      rec.onresult = (evt) => {
+        const spoken = Array.from(evt.results).map((r) => r[0].transcript).join('');
+        setInput(spoken);
+      };
+      rec.onerror = () => {
+        setIsListening(false);
+      };
+      rec.onend = () => {
+        setIsListening(false);
+      };
+      recognitionRef.current = rec;
+      try {
+        rec.start();
+      } catch {
+        setIsListening(false);
+      }
+    } else {
+      setIsListening(true);
+      fetch('/api/voice/shop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: 'Show running shoes under 3000' }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.transcribed_input) {
+            setInput(data.transcribed_input);
+          }
+        })
+        .finally(() => setIsListening(false));
+    }
+  };
 
   const checkScroll = useCallback(() => {
     if (chipsRef.current) {
@@ -313,6 +412,32 @@ export default function ChatPanel({
                     : msg.text}
                 </div>
 
+                {msg.sender === 'assistant' && msg.text && (
+                  <div style={{ marginTop: '6px', marginBottom: '4px' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleSpeakMessage(msg.id, msg.text)}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: '12px',
+                        padding: '2px 8px',
+                        fontSize: '11px',
+                        color: playingMsgId === msg.id ? '#38bdf8' : 'var(--text-muted)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                      }}
+                      title="Listen with Gnani TTS"
+                    >
+                      <Volume2 size={12} color={playingMsgId === msg.id ? '#38bdf8' : 'var(--text-muted)'} />
+                      <span>{playingMsgId === msg.id ? 'Speaking...' : 'Listen'}</span>
+                    </button>
+                  </div>
+                )}
+
                 {/* Render Product Cards when type is product_search or products exist */}
                 {msg.products && msg.products.length > 0 && (
                   <div className="products-container">
@@ -442,11 +567,38 @@ export default function ChatPanel({
             <input
               type="text"
               className="chat-input-field"
-              placeholder="Ask the agent to find products, compare options, or start a purchase..."
+              placeholder={isListening ? "Listening with Gnani Voice... Speak now" : "Ask the agent to find products, compare options, or start a purchase..."}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               disabled={isSending}
+              style={{
+                borderColor: isListening ? '#ef4444' : undefined,
+                boxShadow: isListening ? '0 0 10px rgba(239, 68, 68, 0.4)' : undefined,
+              }}
             />
+            <button
+              type="button"
+              onClick={toggleVoiceListening}
+              className={`voice-mic-btn ${isListening ? 'active' : ''}`}
+              title={isListening ? "Stop listening" : "Speak with Gnani Voice Assistant"}
+              style={{
+                background: isListening ? '#ef4444' : 'transparent',
+                color: isListening ? '#ffffff' : 'var(--text-muted)',
+                border: isListening ? '1px solid #ef4444' : '1px solid var(--border-subtle)',
+                borderRadius: '50%',
+                width: '36px',
+                height: '36px',
+                minWidth: '36px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                marginRight: '6px',
+              }}
+            >
+              {isListening ? <MicOff size={16} /> : <Mic size={16} />}
+            </button>
             <button type="submit" className="send-circle-btn" title="Send Message" disabled={!input.trim() || isSending}>
               <ArrowUp size={18} />
             </button>

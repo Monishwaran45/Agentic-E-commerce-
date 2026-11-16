@@ -185,7 +185,7 @@
       }
     },
     "evidence_draft": {
-      "text": "Dear PayPal Dispute Resolution Team,\n\nWe respectfully contest Dispute PP-D-1094821 regarding Order ORD-99321 (Sony Alpha a7 IV Mirrorless Camera Body).\n\n1. PROOF OF SHIPMENT & DELIVERY:\nThe package was fulfilled via UPS (Tracking: 1Z9999999999999999) and delivered to the registered PayPal address on file.\n\n2. INDEPENDENT CARRIER CONFIRMATION:\nCarrier records confirm delivery with signature status: M. VANCE. Proof of fulfillment is verified.\n\n3. SELLER PROTECTION ELIGIBILITY:\nAll requirements under PayPal Seller Protection Policy (Section 11) have been satisfied. Physical transit and destination scans verify complete fulfillment.\n\nWe kindly request that PayPal release the reserved funds and resolve this case in the seller's favor.\n\nRespectfully submitted,\nAuthorized Merchant Representative",
+      "text": "Official Carrier Delivery Certification: Package was dispatched under certified bill of lading and successfully delivered with verified recipient signature 'M. VANCE'. Carrier tracking (1Z9999999999999999) confirms exact match to registered buyer delivery coordinates. Requesting immediate case closure.",
       "proofs": [
         {
           "type": "PROOF_OF_FULFILLMENT",
@@ -212,7 +212,7 @@
       "currency": "USD"
     },
     "seller_response_due_date": "2026-10-24T08:30:00Z",
-    "ai_drafted_evidence": "Dear PayPal Dispute Resolution Team,\n\nWe respectfully contest Dispute PP-D-1094821 regarding Order ORD-99321 (Sony Alpha a7 IV Mirrorless Camera Body).\n\n1. PROOF OF SHIPMENT & DELIVERY:\nThe package was fulfilled via UPS (Tracking: 1Z9999999999999999) and delivered to the registered PayPal address on file.\n\n2. INDEPENDENT CARRIER CONFIRMATION:\nCarrier records confirm delivery with signature status: M. VANCE. Proof of fulfillment is verified.\n\n3. SELLER PROTECTION ELIGIBILITY:\nAll requirements under PayPal Seller Protection Policy (Section 11) have been satisfied. Physical transit and destination scans verify complete fulfillment.\n\nWe kindly request that PayPal release the reserved funds and resolve this case in the seller's favor.\n\nRespectfully submitted,\nAuthorized Merchant Representative",
+    "ai_drafted_evidence": "Official Carrier Delivery Certification: Package was dispatched under certified bill of lading and successfully delivered with verified recipient signature 'M. VANCE'. Carrier tracking (1Z9999999999999999) confirms exact match to registered buyer delivery coordinates. Requesting immediate case closure.",
     "seller_approval": {
       "approved": false,
       "conceded": true,
