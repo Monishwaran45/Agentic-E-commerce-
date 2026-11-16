@@ -135,6 +135,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------------------------
+# Enterprise Role-Based Access Control (RBAC) System
+# Roles: shopper, merchant, dispute_analyst, admin
+# ---------------------------------------------------------------------------
+ROLES_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "shopper": {
+        "name": "Customer / Shopper",
+        "badge": "Shopper",
+        "icon": "ShoppingBag",
+        "description": "Conversational product discovery, Gnani voice search, and Razorpay checkout",
+        "permissions": ["shop:read", "shop:chat", "shop:voice", "cart:checkout", "order:read"]
+    },
+    "merchant": {
+        "name": "Merchant Operations Manager",
+        "badge": "Merchant",
+        "icon": "Building2",
+        "description": "Inventory catalog management, spend cap controls, and security audit log inspection",
+        "permissions": ["shop:read", "shop:chat", "shop:voice", "cart:checkout", "order:read", "inventory:manage", "audit:read", "guardrails:manage"]
+    },
+    "dispute_analyst": {
+        "name": "PayPal Dispute & Risk Analyst",
+        "badge": "Disputes",
+        "icon": "Scale",
+        "description": "PayPal dispute defense, legal precedent generation, and carrier tracking analysis",
+        "permissions": ["disputes:read", "disputes:evidence", "disputes:approve", "disputes:reject", "audit:read"]
+    },
+    "admin": {
+        "name": "Vasool Recovery Admin (Full Access)",
+        "badge": "Admin",
+        "icon": "ShieldCheck",
+        "description": "Autonomous LangGraph recovery, Gnani voice terminal, HITL approvals, and cryptographic ledger",
+        "permissions": ["*"]
+    }
+}
+
+@app.get("/api/auth/roles")
+def get_available_roles():
+    """Returns available RBAC roles and permissions."""
+    return ROLES_REGISTRY
+
+@app.get("/api/auth/me")
+def get_current_user_profile(x_user_role: Optional[str] = Header("shopper")):
+    role_key = (x_user_role or "shopper").lower().strip()
+    if role_key not in ROLES_REGISTRY:
+        role_key = "shopper"
+    return {
+        "role": role_key,
+        "details": ROLES_REGISTRY[role_key],
+        "all_roles": list(ROLES_REGISTRY.keys())
+    }
+
 # Vasool Recovery Router (Mounted per Spec v0.2)
 try:
     from .recovery import router as recovery_router

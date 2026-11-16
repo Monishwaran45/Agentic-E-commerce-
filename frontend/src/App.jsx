@@ -1,4 +1,15 @@
 import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
+import {
+  ShoppingBag,
+  Library,
+  Sparkles,
+  Mic,
+  Scale,
+  Clock,
+  Database,
+  ShieldCheck,
+  Store,
+} from 'lucide-react';
 import Header from './components/Header';
 import CatalogSidebar from './components/CatalogSidebar';
 import ChatPanel from './components/ChatPanel';
@@ -11,14 +22,15 @@ const VasoolConsole = lazy(() => import('./components/VasoolConsole'));
 
 function ViewLoader() {
   return (
-    <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
+    <div style={{ height: '100%', minHeight: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)' }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', color: 'var(--text-muted)' }}>
         <div className="animate-spin" style={{ width: '28px', height: '28px', borderRadius: '50%', border: '3px solid var(--border-subtle)', borderTopColor: 'var(--accent-uber-blue)' }} />
-        <span style={{ fontSize: '13px' }}>Loading...</span>
+        <span style={{ fontSize: '13px' }}>Loading workspace...</span>
       </div>
     </div>
   );
 }
+
 import {
   sendChatMessage,
   checkBackendHealth,
@@ -29,8 +41,35 @@ import {
   getChatSessions,
   getAuditLogs,
   clearAuditLogs,
+  setStoredRole,
 } from './services/api';
 import catalogData from './data/catalog.json';
+
+const ROLE_TABS = {
+  shopper: [
+    { id: 'shopping', label: 'Shopping Assistant', icon: ShoppingBag },
+    { id: 'catalog', label: 'Browse Catalog', icon: Library },
+  ],
+  merchant: [
+    { id: 'shopping', label: 'Storefront Assistant', icon: ShoppingBag },
+    { id: 'catalog', label: 'Catalog & Inventory', icon: Library },
+    { id: 'guardrails', label: 'Spend & Guardrails', icon: ShieldCheck },
+  ],
+  dispute_analyst: [
+    { id: 'disputes', label: 'PayPal Dispute Center', icon: Scale },
+    { id: 'guardrails', label: 'Security & Audit Logs', icon: ShieldCheck },
+  ],
+  admin: [
+    { id: 'shopping', label: 'Shopping Assistant', icon: ShoppingBag },
+    { id: 'catalog', label: 'Catalog & Inventory', icon: Library },
+    { id: 'recovery', label: 'Vasool Recovery (LangGraph)', icon: Sparkles },
+    { id: 'voice_ops', label: 'Gnani Voice Terminal', icon: Mic },
+    { id: 'disputes', label: 'PayPal Disputes', icon: Scale },
+    { id: 'approvals', label: 'HITL Approvals', icon: Clock },
+    { id: 'ledger', label: 'Cryptographic Ledger', icon: Database },
+    { id: 'guardrails', label: 'Security Matrix', icon: ShieldCheck },
+  ],
+};
 
 function hydrateMessages(rawMessages) {
   if (!Array.isArray(rawMessages)) return [];
@@ -38,7 +77,6 @@ function hydrateMessages(rawMessages) {
     let products = Array.isArray(m.products) ? m.products : [];
     let comparison = Array.isArray(m.comparison) ? m.comparison : [];
 
-    // Robust fallback: if legacy history record only preserved text without products array
     if (products.length === 0 && comparison.length === 0 && (m.role === 'assistant' || m.sender === 'assistant')) {
       const prevMsg = idx > 0 ? rawMessages[idx - 1] : null;
       if (prevMsg && (prevMsg.role === 'user' || prevMsg.sender === 'user') && (prevMsg.content || prevMsg.text)) {
@@ -68,23 +106,7 @@ function hydrateMessages(rawMessages) {
   });
 }
 
-function isCatalogBrowsePrompt(text) {
-  const normalized = text.toLowerCase();
-  const patterns = [
-    'what are the things',
-    "what's in",
-    'what is in',
-    'what do you have',
-    'show me everything',
-    'all products',
-    'browse catalog',
-    'browse catalogue',
-  ];
-  return (normalized.includes('catalog') || normalized.includes('catalogue')) && patterns.some((pattern) => normalized.includes(pattern));
-}
-
 export default function App() {
-  // Vasool Route Dispatching (Spec v0.2: /pay/:token and /console)
   const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
   if (currentPath.startsWith('/pay/')) {
     const payToken = currentPath.split('/pay/')[1]?.split('/')[0] || '';
@@ -95,8 +117,17 @@ export default function App() {
     );
   }
 
-  const [currentView, setCurrentView] = useState(() => {
-    return currentPath === '/console' || currentPath.startsWith('/console/') ? 'console' : 'shop';
+  // Enterprise RBAC Role Management
+  const [userRole, setUserRole] = useState(() => {
+    return localStorage.getItem('user_role_pref') || 'admin';
+  });
+
+  // Dynamic active tab in unified workspace
+  const [activeTab, setActiveTab] = useState(() => {
+    if (currentPath === '/console' || currentPath.startsWith('/console/')) {
+      return 'recovery';
+    }
+    return 'shopping';
   });
 
   const [theme, setTheme] = useState(() => {
@@ -108,7 +139,6 @@ export default function App() {
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [catalogProducts, setCatalogProducts] = useState([]);
 
-  // Dynamic active session ID & saved sessions list (persisted across reloads)
   const [sessionId, setSessionId] = useState(() => {
     return localStorage.getItem('active_session_id') || `sess_${Math.random().toString(36).substring(2, 9)}`;
   });
@@ -117,14 +147,22 @@ export default function App() {
 
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedQty, setSelectedQty] = useState(1);
-  const [activeStep, setActiveStep] = useState(1); // 1: SEARCH, 2: SELECT, 3: VERIFY, 4: ORDER, 5: PAY
+  const [activeStep, setActiveStep] = useState(1);
   const [mobileSummaryOpen, setMobileSummaryOpen] = useState(false);
 
-  // Privacy Consent & Chat History State
   const [showConsentPrompt, setShowConsentPrompt] = useState(false);
   const [consentGiven, setConsentGiven] = useState(() => {
     return localStorage.getItem('chat_consent_pref') === 'true' ? true : null;
   });
+
+  const handleRoleChange = (newRole) => {
+    setUserRole(newRole);
+    setStoredRole(newRole);
+    const validTabs = (ROLE_TABS[newRole] || []).map((t) => t.id);
+    if (!validTabs.includes(activeTab)) {
+      setActiveTab(validTabs[0] || 'shopping');
+    }
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -177,326 +215,101 @@ export default function App() {
     }
   }, [sessionId]);
 
-  const openCatalogPanel = useCallback(async () => {
-    setCatalogOpen(true);
-    if (catalogProducts.length === 0) {
-      const products = await getCatalog();
-      setCatalogProducts(products);
-    }
-  }, [catalogProducts.length]);
-
   useEffect(() => {
-    async function verifyHealthAndLoad() {
-      const health = await checkBackendHealth();
-      setBackendConnected(health.online);
+    let mounted = true;
+    checkBackendHealth().then((res) => {
+      if (mounted) setBackendConnected(res.online);
+    });
+    getCatalog().then((cat) => {
+      if (mounted && Array.isArray(cat) && cat.length > 0) {
+        setCatalogProducts(cat);
+      }
+    });
+    refreshSessionsList();
+    return () => {
+      mounted = false;
+    };
+  }, [refreshSessionsList]);
 
-      await refreshSessionsList();
-      await refreshAuditLogs();
+  const handleSendMessage = async (text) => {
+    const userMsg = { id: Date.now(), sender: 'user', text };
+    setMessages((prev) => [...prev, userMsg]);
 
-      const savedConsentPref = localStorage.getItem('chat_consent_pref');
-
-      // Check if stored chat history exists for active sessionId
-      const historyRes = await getChatHistory(sessionId);
-      if (historyRes && historyRes.messages && historyRes.messages.length > 0) {
-        const loaded = hydrateMessages(historyRes.messages);
-        setMessages(loaded);
-        setConsentGiven(true);
-        setShowConsentPrompt(false);
-      } else if (savedConsentPref === 'true') {
-        // Auto-enable consent for new sessions if user already granted global consent
-        await sendChatConsent(sessionId, true);
-        setConsentGiven(true);
-        setShowConsentPrompt(false);
+    const res = await sendChatMessage(text, sessionId, consentGiven);
+    if (res && res.data) {
+      const assistantMsg = {
+        id: Date.now() + 1,
+        sender: 'assistant',
+        text: res.data.reply || '',
+        products: res.data.products || [],
+        comparison: res.data.comparison || [],
+        blocked: res.data.type === 'blocked' || false,
+        agentActivity: res.data.products?.length > 0 ? `Found ${res.data.products.length} products` : null,
+      };
+      setMessages((prev) => [...prev, assistantMsg]);
+      if (res.data.auditEntry) {
+        setAuditLogs((prev) => [res.data.auditEntry, ...prev]);
       }
     }
-    verifyHealthAndLoad();
-  }, [sessionId, refreshSessionsList]);
-
-  // Handle switching to a past session from the sidebar
-  const handleSelectSession = async (sid) => {
-    if (sid === sessionId) return;
-    setSessionId(sid);
-    localStorage.setItem('active_session_id', sid);
-    setSelectedProduct(null);
-    setSelectedQty(1);
-    setActiveStep(1);
-
-    const historyRes = await getChatHistory(sid);
-    if (historyRes && historyRes.messages && historyRes.messages.length > 0) {
-      const loaded = hydrateMessages(historyRes.messages);
-      setMessages(loaded);
-      setConsentGiven(true);
-      setShowConsentPrompt(false);
-    } else {
-      setMessages([DEFAULT_WELCOME_MESSAGE]);
-    }
+    refreshSessionsList();
   };
 
-  // Handle starting a fresh session (+ New Chat)
-  const handleNewChat = async () => {
-    const newId = `sess_${Math.random().toString(36).substring(2, 9)}`;
-    setSessionId(newId);
-    localStorage.setItem('active_session_id', newId);
-    setMessages([DEFAULT_WELCOME_MESSAGE]);
-    setSelectedProduct(null);
-    setSelectedQty(1);
-    setActiveStep(1);
-
-    const savedConsentPref = localStorage.getItem('chat_consent_pref');
-    if (savedConsentPref === 'true') {
-      await sendChatConsent(newId, true);
-      setConsentGiven(true);
-      setShowConsentPrompt(false);
-    } else {
-      setConsentGiven(null);
-      setShowConsentPrompt(false);
-    }
-  };
-
-  // Handle deleting a session
-  const handleDeleteSession = async (sid) => {
-    await deleteChatHistory(sid);
-    await refreshSessionsList();
-
-    if (sid === sessionId) {
-      handleNewChat();
-    }
-  };
-
-  // Handle user selecting a product card via "Buy Now" button
-  const handleSelectProduct = (product, initialQty = 1) => {
+  const handleSelectProduct = (product) => {
     setSelectedProduct(product);
-    setSelectedQty(initialQty);
-    setActiveStep(2); // Step 2: Product Selected
-    setMobileSummaryOpen(true);
-
-    const selectMsg = {
-      id: Date.now(),
-      sender: 'assistant',
-      text: `${product.name} selected.`,
-      agentActivity: `Product selected: ${product.name}`,
-    };
-
-    setMessages((prev) => [...prev, selectMsg]);
+    setSelectedQty(1);
+    setActiveStep(2);
   };
 
   const handleResetSelection = () => {
     setSelectedProduct(null);
     setSelectedQty(1);
     setActiveStep(1);
-    setMobileSummaryOpen(false);
   };
 
-  const handleSendMessage = async (userText) => {
-    const userMsg = {
-      id: Date.now(),
-      sender: 'user',
-      text: userText,
-    };
-
-    setMessages((prev) => [...prev, userMsg]);
-    const lowerText = userText.toLowerCase().trim();
-
-    if (isCatalogBrowsePrompt(userText)) {
-      await openCatalogPanel();
-      setMessages((prev) => [...prev, {
-        id: Date.now() + 1,
-        sender: 'assistant',
-        text: "You can browse everything in the catalog panel on the left - or tell me what you're looking for and I'll help you find it.",
-        products: [],
-      }]);
-      return;
-    }
-
-    // Handle quantity update from chat if product is selected
-    if (selectedProduct) {
-      const qtyMatch = lowerText.match(/^(?:buy\s+|qty\s+|quantity\s+)?(\d+)$/i) || lowerText.match(/(?:buy|set|make\s+it)\s+(\d+)/i);
-      if (qtyMatch) {
-        const newQty = Math.max(1, Math.min(selectedProduct.stock, parseInt(qtyMatch[1], 10)));
-        setSelectedQty(newQty);
-        const qtyMsg = {
-          id: Date.now() + 1,
-          sender: 'assistant',
-          text: `Quantity updated to ${newQty}.`,
-        };
-        setMessages((prev) => [...prev, qtyMsg]);
-        return;
-      }
-    }
-
-    // Check for natural language selection e.g. "buy the second one"
-    if ((lowerText.includes('second') || lowerText.includes('first') || lowerText.includes('third') || lowerText.includes('buy the')) && messages.length > 0) {
-      const lastMsgWithProducts = [...messages].reverse().find((m) => m.products && m.products.length > 0);
-      if (lastMsgWithProducts) {
-        let index = 0;
-        if (lowerText.includes('second')) index = 1;
-        else if (lowerText.includes('third')) index = 2;
-
-        if (lastMsgWithProducts.products[index]) {
-          const item = lastMsgWithProducts.products[index];
-          let qty = 1;
-          const matchNum = lowerText.match(/(\d+)/);
-          if (matchNum) qty = Math.max(1, parseInt(matchNum[1]));
-
-          handleSelectProduct(item, qty);
-          return;
-        }
-      }
-    }
-
-    const res = await sendChatMessage(userText, { sessionId });
-    const responseData = res?.data;
-
-    if (res?.success && responseData) {
-      if (responseData.needs_consent && consentGiven === null) {
-        setShowConsentPrompt(true);
-      }
-
-      const returnedProducts = Array.isArray(responseData.products) ? responseData.products : [];
-      const comparisonProducts = Array.isArray(responseData.comparison) ? responseData.comparison : [];
-      const botMsg = {
-        id: Date.now() + 1,
-        sender: 'assistant',
-        text: typeof responseData.reply === 'string' && responseData.reply.trim()
-          ? responseData.reply
-          : "I'm having a little trouble processing that right now - mind trying again in a moment?",
-        products: returnedProducts,
-        comparison: comparisonProducts,
-        blocked: responseData.blocked || false,
-        error: responseData.type === 'error',
-        agentActivity: comparisonProducts.length > 0
-          ? `Compared ${comparisonProducts.length} catalog products`
-          : returnedProducts.length > 0
-          ? `Searched catalog: Found ${returnedProducts.length} matching products`
-          : responseData.blocked
-          ? `Guardrail enforcement blocked action`
-          : responseData.type === 'error'
-          ? 'Chat request needs a retry'
-          : null,
-      };
-
-      setMessages((prev) => [...prev, botMsg]);
-
-      if (returnedProducts.length > 0) {
-        setActiveStep(1); // Step 1: Product Searched
-      }
-
-      if (responseData.auditEntry) {
-        setAuditLogs((prev) => [responseData.auditEntry, ...prev]);
-        if (responseData.blocked) {
-          setAuditOpen(true);
-        }
-      }
-
-      // Refresh saved sessions list
-      refreshSessionsList();
-    } else {
-      setMessages((prev) => [...prev, {
-        id: Date.now() + 1,
-        sender: 'assistant',
-        text: "I'm having a little trouble processing that right now - mind trying again in a moment?",
-        products: [],
-        error: true,
-        agentActivity: 'Chat request needs a retry',
-      }]);
-    }
+  const handleStockVerified = () => setActiveStep(3);
+  const handleOrderCreated = () => setActiveStep(4);
+  const handleOrderSuccess = () => {
+    setActiveStep(5);
+    refreshAuditLogs();
   };
 
-  const handleConsentChoice = async (consent) => {
-    setShowConsentPrompt(false);
-    setConsentGiven(consent);
-    if (consent) {
-      localStorage.setItem('chat_consent_pref', 'true');
-    } else {
-      localStorage.setItem('chat_consent_pref', 'false');
-    }
-    await sendChatConsent(sessionId, consent);
-    refreshSessionsList();
-  };
-
-  const handleClearChatHistory = async () => {
-    await deleteChatHistory(sessionId);
-    localStorage.removeItem('chat_consent_pref');
+  const handleNewChat = () => {
+    const newId = `sess_${Math.random().toString(36).substring(2, 9)}`;
+    setSessionId(newId);
     setMessages([DEFAULT_WELCOME_MESSAGE]);
-    setConsentGiven(null);
-    setShowConsentPrompt(false);
-    refreshSessionsList();
-  };
-
-  const handleAuditLogged = (newEntry) => {
-    setAuditLogs((prev) => [newEntry, ...prev]);
-  };
-
-  const handleStockVerified = (stockData) => {
-    setActiveStep(3); // Step 3: Stock Verified
-    if (stockData?.auditEntry) {
-      setAuditLogs((prev) => [stockData.auditEntry, ...prev]);
-    }
-  };
-
-  const handleOrderCreated = (orderData) => {
-    setActiveStep(4); // Step 4: Order Created
-    if (orderData?.auditEntry) {
-      setAuditLogs((prev) => [orderData.auditEntry, ...prev]);
-    }
-  };
-
-  const handleOrderSuccess = (orderData) => {
-    setActiveStep(5); // Step 5: Payment Verified
-    if (orderData?.auditEntry) {
-      setAuditLogs((prev) => [orderData.auditEntry, ...prev]);
-    }
+    setSelectedProduct(null);
+    setActiveStep(1);
   };
 
   const handleClearLogs = async () => {
     await clearAuditLogs();
-    const logs = await getAuditLogs(sessionId);
-    if (logs && Array.isArray(logs)) {
-      setAuditLogs(logs);
-    } else {
-      setAuditLogs([]);
-    }
+    setAuditLogs([]);
+  };
+
+  const handleClearChatHistory = async () => {
+    await deleteChatHistory(sessionId);
+    setMessages([DEFAULT_WELCOME_MESSAGE]);
+    refreshSessionsList();
+  };
+
+  const handleAuditLogged = (entry) => {
+    setAuditLogs((prev) => [entry, ...prev]);
+  };
+
+  const handleConsentChoice = async (consented) => {
+    setConsentGiven(consented);
+    localStorage.setItem('chat_consent_pref', String(consented));
+    setShowConsentPrompt(false);
+    await sendChatConsent(sessionId, consented);
   };
 
   const blockedCount = auditLogs.filter((l) => l.result === 'BLOCKED').length;
-
   const currentSpend = selectedProduct ? (selectedProduct.price || 0) * selectedQty : 0;
-
-  const handleSwitchView = (view) => {
-    setCurrentView(view);
-    if (typeof window !== 'undefined') {
-      window.history.pushState({}, '', view === 'console' ? '/console' : '/');
-    }
-  };
-
-  if (currentView === 'console') {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-        <Header
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          backendConnected={backendConnected}
-          spendCap={10000}
-          currentSpend={currentSpend}
-          auditOpen={auditOpen}
-          onToggleAudit={() => setAuditOpen(!auditOpen)}
-          catalogOpen={catalogOpen}
-          onToggleCatalog={() => setCatalogOpen(!catalogOpen)}
-          blockedCount={blockedCount}
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-          currentView="console"
-          onSwitchView={handleSwitchView}
-        />
-        <Suspense fallback={<ViewLoader />}>
-          <VasoolConsole onBackToStorefront={() => handleSwitchView('shop')} />
-        </Suspense>
-      </div>
-    );
-  }
+  const availableTabs = ROLE_TABS[userRole] || ROLE_TABS.shopper;
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div className="app-container" data-theme={theme} style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Top Header with Role-Based Access Control Switcher */}
       <Header
         theme={theme}
         onToggleTheme={toggleTheme}
@@ -505,15 +318,11 @@ export default function App() {
         currentSpend={currentSpend}
         auditOpen={auditOpen}
         onToggleAudit={() => {
-          if (!auditOpen) {
-            refreshAuditLogs();
-          }
+          if (!auditOpen) refreshAuditLogs();
           setAuditOpen(!auditOpen);
         }}
         catalogOpen={catalogOpen}
-        onToggleCatalog={() => {
-          setCatalogOpen(!catalogOpen);
-        }}
+        onToggleCatalog={() => setCatalogOpen(!catalogOpen)}
         blockedCount={blockedCount}
         onClearChatHistory={handleClearChatHistory}
         sidebarCollapsed={sidebarCollapsed}
@@ -521,62 +330,204 @@ export default function App() {
         mobileSummaryOpen={mobileSummaryOpen}
         onToggleMobileSummary={() => setMobileSummaryOpen(!mobileSummaryOpen)}
         hasSelectedItem={!!selectedProduct}
-        currentView={currentView}
-        onSwitchView={handleSwitchView}
+        userRole={userRole}
+        onChangeRole={handleRoleChange}
       />
 
-      <div className="app-main-layout">
-        {/* Left Column: Interactive Product Catalog Sidebar */}
-        <CatalogSidebar
-          products={catalogProducts.length > 0 ? catalogProducts : catalogData}
-          selectedProduct={selectedProduct}
-          onSelectProduct={handleSelectProduct}
-          onAskAgent={handleSendMessage}
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-          onOpenFullCatalog={() => setCatalogOpen(true)}
-          onNewChat={handleNewChat}
-        />
-
-        {/* Center Column: Conversation & Product Discovery */}
-        <div className="chat-discovery-column">
-          <ChatPanel
-            messages={messages}
-            activeStep={activeStep}
-            onSendMessage={handleSendMessage}
-            onSelectProduct={handleSelectProduct}
-            onAuditLogged={handleAuditLogged}
-            showConsentPrompt={showConsentPrompt}
-            onConsentChoice={handleConsentChoice}
-          />
+      {/* Role-Based Workspace Navigation Bar */}
+      <nav
+        style={{
+          background: '#0d1322',
+          borderBottom: '1px solid #1e293b',
+          padding: '8px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
+          overflowX: 'auto',
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'nowrap' }}>
+          {availableTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 14px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  border: isActive ? '1px solid #38bdf8' : '1px solid transparent',
+                  background: isActive ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+                  color: isActive ? '#38bdf8' : '#94a3b8',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <Icon size={14} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
+        <div style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span>Role View:</span>
+          <span style={{
+            background: 'rgba(56, 189, 248, 0.15)',
+            color: '#38bdf8',
+            padding: '2px 8px',
+            borderRadius: '6px',
+            fontWeight: 600,
+            textTransform: 'uppercase',
+            fontSize: '10px'
+          }}>
+            {userRole}
+          </span>
+        </div>
+      </nav>
 
-        {/* Right Column: Checkout Sheet Panel (Slides in when item is selected) */}
-        <div className={`purchase-summary-column ${selectedProduct ? 'has-selected-item' : ''} ${mobileSummaryOpen ? 'mobile-open' : ''}`}>
-          {selectedProduct && (
-            <PurchaseSummaryPanel
-              key={selectedProduct?.sku || 'empty-purchase'}
+      {/* Dynamic Unified Workspace Content (Single Application Shell) */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* TAB 1: SHOPPING ASSISTANT (3-Column Layout with Gnani Voice) */}
+        {activeTab === 'shopping' && (
+          <div className="app-main-layout" style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+            {/* Left Column: Interactive Product Catalog Sidebar */}
+            <CatalogSidebar
+              products={catalogProducts.length > 0 ? catalogProducts : catalogData}
               selectedProduct={selectedProduct}
-              quantity={selectedQty}
-              onQtyChange={setSelectedQty}
-              onResetSelection={handleResetSelection}
-              onStockVerified={handleStockVerified}
-              onOrderCreated={handleOrderCreated}
-              onOrderSuccess={handleOrderSuccess}
-              sessionId={sessionId}
+              onSelectProduct={handleSelectProduct}
+              onAskAgent={handleSendMessage}
+              collapsed={sidebarCollapsed}
+              onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+              onOpenFullCatalog={() => setActiveTab('catalog')}
+              onNewChat={handleNewChat}
             />
-          )}
-        </div>
 
-        {/* Mobile Backdrop Overlays */}
-        {!sidebarCollapsed && (
-          <div className="mobile-overlay-backdrop sidebar-backdrop" onClick={() => setSidebarCollapsed(true)} />
+            {/* Center Column: Conversation & Product Discovery */}
+            <div className="chat-discovery-column" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <ChatPanel
+                messages={messages}
+                activeStep={activeStep}
+                onSendMessage={handleSendMessage}
+                onSelectProduct={handleSelectProduct}
+                onAuditLogged={handleAuditLogged}
+                showConsentPrompt={showConsentPrompt}
+                onConsentChoice={handleConsentChoice}
+              />
+            </div>
+
+            {/* Right Column: Checkout Sheet Panel */}
+            <div className={`purchase-summary-column ${selectedProduct ? 'has-selected-item' : ''} ${mobileSummaryOpen ? 'mobile-open' : ''}`}>
+              {selectedProduct && (
+                <PurchaseSummaryPanel
+                  key={selectedProduct?.sku || 'empty-purchase'}
+                  selectedProduct={selectedProduct}
+                  quantity={selectedQty}
+                  onQtyChange={setSelectedQty}
+                  onResetSelection={handleResetSelection}
+                  onStockVerified={handleStockVerified}
+                  onOrderCreated={handleOrderCreated}
+                  onOrderSuccess={handleOrderSuccess}
+                  sessionId={sessionId}
+                />
+              )}
+            </div>
+
+            {/* Mobile Backdrop Overlays */}
+            {!sidebarCollapsed && (
+              <div className="mobile-overlay-backdrop sidebar-backdrop" onClick={() => setSidebarCollapsed(true)} />
+            )}
+            {mobileSummaryOpen && (
+              <div className="mobile-overlay-backdrop summary-backdrop" onClick={() => setMobileSummaryOpen(false)} />
+            )}
+          </div>
         )}
-        {mobileSummaryOpen && (
-          <div className="mobile-overlay-backdrop summary-backdrop" onClick={() => setMobileSummaryOpen(false)} />
+
+        {/* TAB 2: FULL CATALOG BROWSER & INVENTORY */}
+        {activeTab === 'catalog' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <CatalogPanel
+                open={true}
+                onClose={() => setActiveTab('shopping')}
+                products={catalogProducts.length > 0 ? catalogProducts : catalogData}
+                onSelectProduct={(item) => {
+                  handleSelectProduct(item);
+                  setActiveTab('shopping');
+                }}
+                onAskAgent={(prompt) => {
+                  setActiveTab('shopping');
+                  handleSendMessage(prompt);
+                }}
+              />
+            </Suspense>
+          </div>
+        )}
+
+        {/* TAB 3: VASOOL AUTONOMOUS RECOVERY (LangGraph Orchestrator) */}
+        {activeTab === 'recovery' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <VasoolConsole hideHeader={true} defaultTab="cases" onBackToStorefront={() => setActiveTab('shopping')} />
+            </Suspense>
+          </div>
+        )}
+
+        {/* TAB 4: GNANI VOICE TERMINAL & BRIEFINGS */}
+        {activeTab === 'voice_ops' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <VasoolConsole hideHeader={true} defaultTab="briefing" onBackToStorefront={() => setActiveTab('shopping')} />
+            </Suspense>
+          </div>
+        )}
+
+        {/* TAB 5: PAYPAL DISPUTE CENTER */}
+        {activeTab === 'disputes' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <VasoolConsole hideHeader={true} defaultTab="cases" filterDisputesOnly={true} onBackToStorefront={() => setActiveTab('shopping')} />
+            </Suspense>
+          </div>
+        )}
+
+        {/* TAB 6: HUMAN APPROVALS INBOX (HITL Gate with Voice Read-Back) */}
+        {activeTab === 'approvals' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <VasoolConsole hideHeader={true} defaultTab="approvals" onBackToStorefront={() => setActiveTab('shopping')} />
+            </Suspense>
+          </div>
+        )}
+
+        {/* TAB 7: CANONICAL CRYPTOGRAPHIC LEDGER */}
+        {activeTab === 'ledger' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <VasoolConsole hideHeader={true} defaultTab="ledger" onBackToStorefront={() => setActiveTab('shopping')} />
+            </Suspense>
+          </div>
+        )}
+
+        {/* TAB 8: GUARDRAILS & SECURITY MATRIX */}
+        {activeTab === 'guardrails' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <VasoolConsole hideHeader={true} defaultTab="metrics" onBackToStorefront={() => setActiveTab('shopping')} />
+            </Suspense>
+          </div>
         )}
       </div>
 
+      {/* Floating Audit Drawer if triggered from header */}
       <Suspense fallback={null}>
         {auditOpen && (
           <AuditLogPanel
@@ -585,19 +536,6 @@ export default function App() {
             auditLogs={auditLogs}
             onClearLogs={handleClearLogs}
             spendCap={10000}
-          />
-        )}
-
-        {catalogOpen && (
-          <CatalogPanel
-            open={catalogOpen}
-            onClose={() => setCatalogOpen(false)}
-            products={catalogProducts.length > 0 ? catalogProducts : catalogData}
-            onSelectProduct={handleSelectProduct}
-            onAskAgent={(prompt) => {
-              handleSendMessage(prompt);
-              setCatalogOpen(false);
-            }}
           />
         )}
       </Suspense>

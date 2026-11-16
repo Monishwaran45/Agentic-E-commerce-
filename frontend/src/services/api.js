@@ -5,6 +5,28 @@ import catalogData from '../data/catalog.json';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
   || (import.meta.env.DEV ? '/api' : 'https://razorpay-checkout-agent.onrender.com/api');
 const SPEND_CAP = 10000; // Hard spend cap ceiling in INR
+
+let _currentRole = (typeof localStorage !== 'undefined' ? localStorage.getItem('user_role_pref') : null) || 'admin';
+
+export function getStoredRole() {
+  return _currentRole;
+}
+
+export function setStoredRole(role) {
+  _currentRole = role;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('user_role_pref', role);
+    }
+  } catch {}
+}
+
+export function getAuthHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'X-User-Role': _currentRole,
+  };
+}
 const CHAT_HELP_REPLY = "I'm having a little trouble processing that right now - mind trying again in a moment?";
 const SEARCH_STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'can', 'catalog', 'find', 'for', 'get', 'i', 'in',

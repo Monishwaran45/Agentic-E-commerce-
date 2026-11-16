@@ -91,9 +91,20 @@ const SEED_APPROVALS = [
   },
 ];
 
-export default function VasoolConsole({ onBackToStorefront }) {
-  const [activeTab, setActiveTab] = useState('briefing'); // briefing | cases | approvals | ledger | metrics
+export default function VasoolConsole({
+  onBackToStorefront,
+  defaultTab = 'briefing',
+  hideHeader = false,
+  filterDisputesOnly = false,
+}) {
+  const [activeTab, setActiveTab] = useState(defaultTab);
   const [lang, setLang] = useState('en');
+
+  useEffect(() => {
+    if (defaultTab) {
+      setActiveTab(defaultTab);
+    }
+  }, [defaultTab]);
   const [cases, setCases] = useState(SEED_CASES);
   const [approvals, setApprovals] = useState(SEED_APPROVALS);
   const [selectedCase, setSelectedCase] = useState(null);
@@ -479,15 +490,23 @@ export default function VasoolConsole({ onBackToStorefront }) {
     return `₹${(minor / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
   };
 
+  const displayedCases = useMemo(() => {
+    if (filterDisputesOnly) {
+      return cases.filter((c) => c.channel.includes('PayPal') || c.id.startsWith('PP-'));
+    }
+    return cases;
+  }, [cases, filterDisputesOnly]);
+
   return (
     <div style={{
-      minHeight: '100vh',
+      minHeight: hideHeader ? 'auto' : '100vh',
       backgroundColor: '#090d16',
       color: '#f8fafc',
       fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      padding: '20px',
+      padding: hideHeader ? '10px 0' : '20px',
     }}>
       {/* Top Banner */}
+      {!hideHeader && (
       <div style={{
         maxWidth: '1280px',
         margin: '0 auto 24px auto',
@@ -576,6 +595,7 @@ export default function VasoolConsole({ onBackToStorefront }) {
           })}
         </div>
       </div>
+      )}
 
       <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
         {/* TAB 1: BRIEFING & VOICE */}
@@ -764,7 +784,7 @@ export default function VasoolConsole({ onBackToStorefront }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {cases.map((c) => (
+                  {displayedCases.map((c) => (
                     <tr key={c.id} style={{ borderBottom: '1px solid #1e293b' }}>
                       <td style={{ padding: '12px 10px', fontFamily: 'monospace', fontWeight: 600, color: '#38bdf8' }}>
                         {c.id}
