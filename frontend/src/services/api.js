@@ -518,3 +518,69 @@ export async function getRecoveryOrderStatus(orderId, serviceToken = 'vasool-ser
   return data;
 }
 
+// ---------------------------------------------------------------------------
+// Gnani.ai Voice Services (Vach ASR & Timbre TTS)
+// ---------------------------------------------------------------------------
+
+export async function sendVoiceTurn({
+  message,
+  audioBase64,
+  language = 'en-IN',
+  sessionId,
+  caseId,
+  activeSku,
+  activeProduct,
+  voice = 'Shivani',
+  model = 'timbre-v3.0',
+}) {
+  const res = await fetch(`${API_BASE_URL}/voice/turn`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      message: message || undefined,
+      audio_base64: audioBase64 || undefined,
+      language,
+      session_id: sessionId,
+      case_id: caseId,
+      active_sku: activeSku,
+      active_product: activeProduct,
+      voice,
+      model,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Voice turn request failed with status ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function synthesizeSpeech(text, voice = 'Shivani', language = 'en-IN', model = 'timbre-v3.0') {
+  const res = await fetch(`${API_BASE_URL}/voice/synthesize`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({ text, voice, language, model }),
+  });
+  if (!res.ok) {
+    throw new Error(`Speech synthesis failed with status ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getVoiceBriefing(language = 'en-IN') {
+  const res = await fetch(`${API_BASE_URL}/voice/briefing?language=${language}`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+  if (!res.ok) {
+    throw new Error(`Voice briefing failed with status ${res.status}`);
+  }
+  return res.json();
+}
+
+

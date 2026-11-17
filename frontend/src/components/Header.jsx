@@ -12,6 +12,7 @@ import {
   ChevronDown,
   Check,
   UserCheck,
+  Mic,
 } from 'lucide-react';
 
 const ROLES = [
@@ -40,6 +41,7 @@ export default function Header({
   hasSelectedItem = false,
   userRole = 'admin',
   onChangeRole,
+  onOpenVoiceAgent,
 }) {
   const [showSettings, setShowSettings] = useState(false);
   const [showRoleMenu, setShowRoleMenu] = useState(false);
@@ -237,6 +239,7 @@ export default function Header({
             )}
           </button>
         )}
+
 
         {/* Theme Toggle */}
         <button

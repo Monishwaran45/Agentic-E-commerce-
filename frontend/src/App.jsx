@@ -137,6 +137,7 @@ export default function App() {
   const [backendConnected, setBackendConnected] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const [voiceLang, setVoiceLang] = useState('en-IN');
   const [catalogProducts, setCatalogProducts] = useState([]);
 
   const [sessionId, setSessionId] = useState(() => {
@@ -332,6 +333,7 @@ export default function App() {
         hasSelectedItem={!!selectedProduct}
         userRole={userRole}
         onChangeRole={handleRoleChange}
+        onOpenVoiceAgent={() => setVoiceModalOpen(true)}
       />
 
       {/* Role-Based Workspace Navigation Bar */}
@@ -421,6 +423,11 @@ export default function App() {
                 onAuditLogged={handleAuditLogged}
                 showConsentPrompt={showConsentPrompt}
                 onConsentChoice={handleConsentChoice}
+                activeVoiceLang={voiceLang}
+                onLanguageChange={setVoiceLang}
+                selectedProduct={selectedProduct}
+                onOrderSuccess={handleOrderSuccess}
+                sessionId={sessionId}
               />
             </div>
 
