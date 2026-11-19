@@ -184,6 +184,12 @@ export default function ChatPanel({
   const [voiceAgentReply, setVoiceAgentReply] = useState('');
   const [voiceOrderPlaced, setVoiceOrderPlaced] = useState(null);
   const [isVoiceMuted, setIsVoiceMuted] = useState(false);
+
+  // Continuous Hands-Free Voice Loop Refs
+  const inlineVoiceActiveRef = useRef(false);
+  const isProcessingOrSpeakingRef = useRef(false);
+  const silenceTimerRef = useRef(null);
+  const currentTranscriptRef = useRef('');
   const voiceRecognitionRef = useRef(null);
 
   const activeAudioRef = useRef(null);
@@ -204,9 +210,14 @@ export default function ChatPanel({
     if (inlineVoiceActive && voiceStatus === 'listening') {
       if (voiceRecognitionRef.current) {
         try {
-          voiceRecognitionRef.current.stop();
+          voiceRecognitionRef.current.abort();
         } catch {}
       }
+      setTimeout(() => {
+        if (inlineVoiceActiveRef.current) {
+          startInlineListening();
+        }
+      }, 100);
     }
   };
 
@@ -226,6 +237,7 @@ export default function ChatPanel({
   const playVyoraVoice = useCallback(
     (text, onEnded) => {
       if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text) {
+        isProcessingOrSpeakingRef.current = false;
         if (onEnded) onEnded();
         return;
       }
@@ -267,14 +279,15 @@ export default function ChatPanel({
       }
 
       utterance.onend = () => {
-        setVoiceStatus('idle');
+        isProcessingOrSpeakingRef.current = false;
         if (onEnded) onEnded();
       };
       utterance.onerror = () => {
-        setVoiceStatus('idle');
+        isProcessingOrSpeakingRef.current = false;
         if (onEnded) onEnded();
       };
 
+      isProcessingOrSpeakingRef.current = true;
       setVoiceStatus('speaking');
       window.speechSynthesis.speak(utterance);
     },
@@ -286,19 +299,22 @@ export default function ChatPanel({
     (replyText, audioBase64, onEnded) => {
       stopSpeech();
       if (isVoiceMuted) {
-        setVoiceStatus('idle');
+        isProcessingOrSpeakingRef.current = false;
+        setVoiceStatus('listening');
         if (onEnded) onEnded();
         return;
       }
+
+      isProcessingOrSpeakingRef.current = true;
+      setVoiceStatus('speaking');
 
       if (audioBase64) {
         try {
           const audio = new Audio(`data:audio/wav;base64,${audioBase64}`);
           activeAudioRef.current = audio;
-          setVoiceStatus('speaking');
 
           audio.onended = () => {
-            setVoiceStatus('idle');
+            isProcessingOrSpeakingRef.current = false;
             activeAudioRef.current = null;
             if (onEnded) onEnded();
           };
@@ -319,9 +335,16 @@ export default function ChatPanel({
     [isVoiceMuted, stopSpeech, playVyoraVoice]
   );
 
-  // Continuous speech recognition for hands-free live conversation
+  // Continuous speech recognition for hands-free live conversation (Hands-Free Loop)
   const startInlineListening = useCallback(() => {
+    if (!inlineVoiceActiveRef.current) return;
     stopSpeech();
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    isProcessingOrSpeakingRef.current = false;
+    currentTranscriptRef.current = '';
     setVoiceTranscript('');
     setVoiceStatus('listening');
 
@@ -334,45 +357,78 @@ export default function ChatPanel({
       try {
         if (voiceRecognitionRef.current) {
           try {
-            voiceRecognitionRef.current.stop();
+            voiceRecognitionRef.current.abort();
           } catch {}
         }
 
         const rec = new SpeechRec();
         rec.lang = chatLanguage;
         rec.interimResults = true;
-        rec.continuous = false;
+        rec.continuous = true; // Stay listening continuously without dying!
 
         rec.onresult = (evt) => {
+          if (isProcessingOrSpeakingRef.current) return;
           const spoken = Array.from(evt.results)
             .map((r) => r[0].transcript)
             .join('');
+          currentTranscriptRef.current = spoken;
           setVoiceTranscript(spoken);
+
+          // Reset Voice Activity Detection (VAD) silence timer
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+          }
+          if (spoken && spoken.trim().length > 1) {
+            silenceTimerRef.current = setTimeout(() => {
+              // 1.2 seconds of silence after speaking -> auto-submit hands-free!
+              const textToSubmit = currentTranscriptRef.current.trim();
+              if (textToSubmit.length > 1 && !isProcessingOrSpeakingRef.current) {
+                try {
+                  rec.stop();
+                } catch {}
+                handleVoiceTurn(textToSubmit);
+              }
+            }, 1200);
+          }
         };
 
         rec.onend = () => {
-          setVoiceTranscript((prev) => {
-            if (prev && prev.trim().length > 1) {
-              handleVoiceTurn(prev.trim());
-            } else {
-              setVoiceStatus('idle');
-            }
-            return prev;
-          });
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+          }
+          // If transcript captured and not yet submitted
+          const pendingText = currentTranscriptRef.current.trim();
+          if (pendingText.length > 1 && !isProcessingOrSpeakingRef.current) {
+            handleVoiceTurn(pendingText);
+          } else if (inlineVoiceActiveRef.current && !isProcessingOrSpeakingRef.current) {
+            // Browser timed out during silence -> automatically re-open mic without user tap!
+            setTimeout(() => {
+              if (inlineVoiceActiveRef.current && !isProcessingOrSpeakingRef.current) {
+                startInlineListening();
+              }
+            }, 150);
+          }
         };
 
         rec.onerror = (e) => {
-          if (e.error !== 'no-speech') {
+          if (e.error === 'no-speech') {
+            // Seamless auto-restart on ambient silence
+            if (inlineVoiceActiveRef.current && !isProcessingOrSpeakingRef.current) {
+              setTimeout(() => {
+                if (inlineVoiceActiveRef.current && !isProcessingOrSpeakingRef.current) {
+                  startInlineListening();
+                }
+              }, 200);
+            }
+          } else if (e.error !== 'aborted') {
             console.warn('SpeechRecognition notice:', e.error);
           }
-          setVoiceStatus('idle');
         };
 
         voiceRecognitionRef.current = rec;
         rec.start();
       } catch (err) {
         console.warn('Speech start notice:', err);
-        setVoiceStatus('idle');
       }
     }
   }, [stopSpeech, chatLanguage]);
@@ -380,7 +436,12 @@ export default function ChatPanel({
   // Process user speech via Vyora Turn API & execute autonomous orders
   const handleVoiceTurn = useCallback(
     async (spokenText) => {
-      if (!spokenText || !spokenText.trim()) return;
+      if (!spokenText || !spokenText.trim() || isProcessingOrSpeakingRef.current) return;
+      isProcessingOrSpeakingRef.current = true;
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
       setVoiceStatus('processing');
 
       try {
@@ -416,41 +477,57 @@ export default function ChatPanel({
           onSendMessage(spokenText);
         }
 
-        // Speak Vyora's response aloud, then automatically resume listening
+        // Speak Vyora's response aloud, then automatically resume listening hands-free!
         playVoiceOutput(reply, res.audio?.audio_base64, () => {
           setTimeout(() => {
-            if (inlineVoiceActive) {
+            if (inlineVoiceActiveRef.current) {
+              setVoiceTranscript('');
               startInlineListening();
             }
-          }, 450);
+          }, 350);
         });
       } catch (err) {
         console.error('Vyora voice turn error:', err);
-        setVoiceStatus('idle');
+        isProcessingOrSpeakingRef.current = false;
+        if (inlineVoiceActiveRef.current) {
+          setTimeout(startInlineListening, 400);
+        } else {
+          setVoiceStatus('idle');
+        }
       }
     },
-    [chatLanguage, sessionId, selectedProduct, onOrderSuccess, onSelectProduct, onSendMessage, playVoiceOutput, inlineVoiceActive, startInlineListening]
+    [chatLanguage, sessionId, selectedProduct, onOrderSuccess, onSelectProduct, onSendMessage, playVoiceOutput, startInlineListening]
   );
 
   // Handle entering/exiting inline live voice mode
   useEffect(() => {
+    inlineVoiceActiveRef.current = inlineVoiceActive;
     if (inlineVoiceActive) {
       startInlineListening();
     } else {
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
       if (voiceRecognitionRef.current) {
         try {
-          voiceRecognitionRef.current.stop();
+          voiceRecognitionRef.current.abort();
         } catch {}
       }
       stopSpeech();
+      isProcessingOrSpeakingRef.current = false;
       setVoiceStatus('idle');
       setVoiceTranscript('');
       setVoiceAgentReply('');
     }
     return () => {
+      inlineVoiceActiveRef.current = false;
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
       if (voiceRecognitionRef.current) {
         try {
-          voiceRecognitionRef.current.stop();
+          voiceRecognitionRef.current.abort();
         } catch {}
       }
       stopSpeech();
@@ -840,17 +917,28 @@ export default function ChatPanel({
                 <div
                   className={`inline-live-orb ${voiceStatus === 'listening' ? 'listening' : voiceStatus === 'speaking' ? 'speaking' : ''}`}
                   onClick={() => {
-                    if (voiceStatus === 'listening') {
-                      if (voiceRecognitionRef.current) {
-                        try {
-                          voiceRecognitionRef.current.stop();
-                        } catch {}
+                    if (voiceStatus === 'speaking') {
+                      // Barge-in: interrupt Vyora and listen immediately
+                      stopSpeech();
+                      isProcessingOrSpeakingRef.current = false;
+                      startInlineListening();
+                    } else if (voiceStatus === 'listening') {
+                      const pending = currentTranscriptRef.current.trim();
+                      if (pending.length > 1) {
+                        if (voiceRecognitionRef.current) {
+                          try {
+                            voiceRecognitionRef.current.stop();
+                          } catch {}
+                        }
+                        handleVoiceTurn(pending);
+                      } else {
+                        startInlineListening();
                       }
                     } else {
                       startInlineListening();
                     }
                   }}
-                  title="Tap orb to speak with Vyora"
+                  title={voiceStatus === 'speaking' ? "Tap to interrupt Vyora" : "Vyora Hands-Free Voice Orb"}
                 />
 
                 {/* Subtitle / Real-time speech transcript below the orb */}
@@ -868,19 +956,23 @@ export default function ChatPanel({
                     <span className="inline-live-status-text">
                       {voiceStatus === 'listening'
                         ? (chatLanguage === 'ta-IN'
-                          ? "கவனிக்கிறது... 'ஷூ 2 ஆர்டர் செய்' என்று கூறவும்"
+                          ? "🎙️ தொடர்ந்து பேசவும்... (Hands-Free Active)"
                           : chatLanguage === 'hi-IN'
-                          ? "सुन रहा हूँ... 'रनिंग शूज़ 2 आर्डर करो' कहें"
-                          : "Listening to you... Say 'place the order' or ask anything")
+                          ? "🎙️ लगातार बोलिए... (Hands-Free Active)"
+                          : "🎙️ Listening... Speak naturally (Hands-Free Active)")
                         : voiceStatus === 'processing'
-                        ? "Vyora is processing..."
+                        ? (chatLanguage === 'ta-IN'
+                          ? "வ்யோரா செயலாக்குகிறது..."
+                          : chatLanguage === 'hi-IN'
+                          ? "व्योरा प्रोसेस कर रहा है..."
+                          : "Vyora is thinking...")
                         : voiceStatus === 'speaking'
                         ? voiceAgentReply
                         : (chatLanguage === 'ta-IN'
-                          ? "பேச தொடங்குங்கள் அல்லது வட்டத்தை தொடவும்"
+                          ? "பேச தொடங்குங்கள்... (வட்டத்தை தொட தேவையில்லை)"
                           : chatLanguage === 'hi-IN'
-                          ? "बोलने के लिए सर्कल पर टैप करें"
-                          : "Tap the orb or speak to start")}
+                          ? "बोलना शुरू करें... (टैप करने की आवश्यकता नहीं)"
+                          : "Speak naturally... (no need to tap)")}
                     </span>
                   )}
                 </div>
