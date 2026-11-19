@@ -343,7 +343,6 @@ export default function App() {
         hasSelectedItem={!!selectedProduct}
         userRole={userRole}
         onChangeRole={handleRoleChange}
-        onOpenVoiceAgent={() => setVoiceModalOpen(true)}
       />
 
       {/* Role-Based Workspace Navigation Bar */}

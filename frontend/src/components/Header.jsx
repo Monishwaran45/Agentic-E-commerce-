@@ -41,7 +41,6 @@ export default function Header({
   hasSelectedItem = false,
   userRole = 'admin',
   onChangeRole,
-  onOpenVoiceAgent,
 }) {
   const [showSettings, setShowSettings] = useState(false);
   const [showRoleMenu, setShowRoleMenu] = useState(false);
