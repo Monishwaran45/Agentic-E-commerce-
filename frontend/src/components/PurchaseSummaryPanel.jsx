@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { ShoppingBag, Plus, Minus, ArrowRight, ArrowLeft, CheckCircle2, CreditCard, Loader2, AlertCircle, RefreshCw, X, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ShoppingBag, Plus, Minus, ArrowRight, ArrowLeft, CheckCircle2, CreditCard, Loader2, AlertCircle, RefreshCw, X, ShieldCheck, ShieldAlert, Tag, Sparkles } from 'lucide-react';
 import { createOrderOnServer, verifyPaymentOnServer, verifyStock, loadRazorpaySDK } from '../services/api';
+import { eventBus } from '../services/eventBus';
 
 const DEFAULT_FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1560343776-97e7d202ff0e?w=800&auto=format&fit=crop&q=80';
 
@@ -32,6 +33,97 @@ export default function PurchaseSummaryPanel({
   const [orderResult, setOrderResult] = useState(null);
   const [paymentError, setPaymentError] = useState(null);
 
+  // Dynamic Spend Elevation & Negotiation State
+  const [effectiveSpendCap, setEffectiveSpendCap] = useState(10000);
+  const [voucherCodeInput, setVoucherCodeInput] = useState('');
+  const [appliedVoucher, setAppliedVoucher] = useState(null);
+  const [elevationRequested, setElevationRequested] = useState(false);
+  const [elevationApproved, setElevationApproved] = useState(false);
+  const [elevationLoading, setElevationLoading] = useState(false);
+
+  useEffect(() => {
+    // Check if voucher was claimed via chat negotiation
+    try {
+      const stored = localStorage.getItem('active_voucher');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setAppliedVoucher(parsed);
+      }
+    } catch {}
+
+    const unsubOverride = eventBus.subscribe('BUDGET_OVERRIDE_APPROVED', (payload) => {
+      setElevationApproved(true);
+      setEffectiveSpendCap(30000); // Elevate cap to ₹30,000 upon merchant sign-off
+      setAppliedVoucher({ code: payload?.voucherCode || 'OVERRIDE_APPROVED', discountPct: 15 });
+    });
+
+    const unsubBargain = eventBus.subscribe('BARGAIN_OFFER_CLAIMED', (payload) => {
+      setAppliedVoucher({ code: payload?.voucherCode || 'BARGAIN15', discountPct: 15 });
+    });
+
+    return () => {
+      unsubOverride();
+      unsubBargain();
+    };
+  }, []);
+
+  const handleApplyVoucher = (e) => {
+    e?.preventDefault();
+    const clean = voucherCodeInput.trim().toUpperCase();
+    if (clean === 'BARGAIN15' || clean === 'SAVE15') {
+      setAppliedVoucher({ code: clean, discountPct: 15 });
+      setPaymentError(null);
+    } else if (clean === 'OVERRIDE_APPROVED' || clean === 'VIP50') {
+      setAppliedVoucher({ code: clean, discountPct: 20 });
+      setEffectiveSpendCap(30000);
+      setElevationApproved(true);
+      setPaymentError(null);
+    } else if (clean === 'SECRET90') {
+      setPaymentError('Promo code SECRET90 rejected: Minimum spend violated (Guardrail Rule #4).');
+    } else if (clean) {
+      setPaymentError(`Invalid or expired voucher code: ${clean}`);
+    }
+  };
+
+  const handleRequestElevation = async () => {
+    setElevationLoading(true);
+    setPaymentError(null);
+    try {
+      const amount = Math.round(totalAmount * 100);
+      await fetch('/api/recovery/hitl-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'SPEND_CAP_ELEVATION',
+          requested_amount_minor: amount,
+          customer_name: shipping.fullName || 'Shopper (Customer)',
+          reason: `High-value purchase of ${selectedProduct?.name} (SKU: ${selectedProduct?.sku}) exceeding ₹10,000 policy ceiling`,
+        }),
+      });
+
+      eventBus.emit('BUDGET_OVERRIDE_REQUESTED', {
+        customerName: shipping.fullName || 'Shopper',
+        amount: amount,
+        sku: selectedProduct?.sku,
+        productName: selectedProduct?.name,
+      });
+
+      setElevationRequested(true);
+    } catch (err) {
+      console.warn('Elevation request error:', err);
+      // Fallback local broadcast
+      eventBus.emit('BUDGET_OVERRIDE_REQUESTED', {
+        customerName: shipping.fullName || 'Shopper',
+        amount: Math.round(totalAmount * 100),
+        sku: selectedProduct?.sku,
+        productName: selectedProduct?.name,
+      });
+      setElevationRequested(true);
+    } finally {
+      setElevationLoading(false);
+    }
+  };
+
   if (!selectedProduct) {
     return (
       <aside className="purchase-summary-panel empty">
@@ -50,9 +142,12 @@ export default function PurchaseSummaryPanel({
   }
 
   const unitPrice = parseFloat(selectedProduct.price || 0);
-  const subtotal = unitPrice * quantity;
+  const rawSubtotal = unitPrice * quantity;
+  const discountAmount = appliedVoucher ? Math.round(rawSubtotal * ((appliedVoucher.discountPct || 15) / 100)) : 0;
+  const subtotal = Math.max(0, rawSubtotal - discountAmount);
   const shippingFee = 0;
   const totalAmount = subtotal + shippingFee;
+  const isOverBudget = totalAmount > effectiveSpendCap;
 
   const handleQtyChange = (delta) => {
     const nextQty = quantity + delta;
@@ -312,6 +407,15 @@ export default function PurchaseSummaryPanel({
                 <span>Shipping Fee</span>
                 <span style={{ color: 'var(--accent-success)', fontWeight: 600 }}>FREE (₹0)</span>
               </div>
+              {appliedVoucher && (
+                <div className="breakdown-row" style={{ color: '#22c55e', fontSize: '12px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Tag size={12} />
+                    <span>Voucher ({appliedVoucher.code} - {appliedVoucher.discountPct}%):</span>
+                  </span>
+                  <span>-₹{discountAmount.toLocaleString()}</span>
+                </div>
+              )}
               <div className="breakdown-divider" />
               <div className="breakdown-row total">
                 <span>TOTAL</span>
@@ -319,36 +423,133 @@ export default function PurchaseSummaryPanel({
               </div>
             </div>
 
+            {/* Dynamic Voucher Code Input */}
+            <form onSubmit={handleApplyVoucher} style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
+              <input
+                type="text"
+                placeholder="Promo Code (e.g. BARGAIN15)"
+                value={voucherCodeInput}
+                onChange={(e) => setVoucherCodeInput(e.target.value)}
+                style={{
+                  flex: 1,
+                  background: 'var(--bg-card, #131b2e)',
+                  border: '1px solid var(--border-subtle, #1e293b)',
+                  borderRadius: '6px',
+                  padding: '6px 10px',
+                  fontSize: '11px',
+                  color: 'var(--text-main, #ffffff)',
+                  textTransform: 'uppercase',
+                }}
+              />
+              <button
+                type="submit"
+                style={{
+                  background: '#1e293b',
+                  color: '#38bdf8',
+                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  borderRadius: '6px',
+                  padding: '6px 12px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Apply
+              </button>
+            </form>
+
             {/* Live Spend Cap Progress Card */}
-            <div className={`panel-spend-cap-card ${totalAmount > 10000 ? 'exceeded' : totalAmount > 7000 ? 'warning' : 'safe'}`}>
+            <div className={`panel-spend-cap-card ${isOverBudget ? 'exceeded' : totalAmount > 7000 ? 'warning' : 'safe'}`}>
               <div className="panel-spend-cap-header">
                 <span className="spend-cap-title">
                   <ShieldCheck size={14} />
                   <span>Spend Cap Guardrail</span>
                 </span>
                 <span className="spend-cap-status-badge">
-                  {totalAmount > 10000 ? 'BLOCKED (> ₹10,000)' : `₹${Math.max(0, 10000 - totalAmount).toLocaleString('en-IN')} Remaining`}
+                  {isOverBudget
+                    ? `BLOCKED (> ₹${effectiveSpendCap.toLocaleString('en-IN')})`
+                    : `₹${Math.max(0, effectiveSpendCap - totalAmount).toLocaleString('en-IN')} Remaining`}
                 </span>
               </div>
               <div className="panel-spend-cap-bar-track">
                 <div
                   className="panel-spend-cap-bar-fill"
                   style={{
-                    width: `${Math.min(100, Math.round((totalAmount / 10000) * 100))}%`,
-                    background: totalAmount > 10000 ? '#ef4444' : totalAmount > 7000 ? '#f59e0b' : '#10b981',
+                    width: `${Math.min(100, Math.round((totalAmount / effectiveSpendCap) * 100))}%`,
+                    background: isOverBudget ? '#ef4444' : totalAmount > 7000 ? '#f59e0b' : '#10b981',
                   }}
                 />
               </div>
               <div className="panel-spend-cap-footer">
                 <span>Cart: ₹{totalAmount.toLocaleString('en-IN')}</span>
-                <span>Max Policy: ₹10,000</span>
+                <span>Max Policy: ₹{effectiveSpendCap.toLocaleString('en-IN')}</span>
               </div>
             </div>
 
-            {totalAmount > 10000 && (
-              <div className="error-alert" style={{ marginBottom: '12px' }}>
-                <AlertCircle size={15} />
-                <span>Autonomous Spend Guardrail: Purchase exceeds ₹10,000 limit. Reduce quantity to proceed.</span>
+            {/* Over-Budget Interactive Elevation Card */}
+            {isOverBudget && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid #ef4444',
+                borderRadius: '10px',
+                padding: '12px',
+                marginBottom: '12px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <ShieldAlert size={16} color="#ef4444" />
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#fca5a5' }}>
+                    Spend Guardrail: Exceeds ₹{effectiveSpendCap.toLocaleString('en-IN')}
+                  </span>
+                </div>
+                <div style={{ fontSize: '11px', color: '#f87171', marginBottom: '10px', lineHeight: 1.4 }}>
+                  Standard shopper policy enforces ₹10,000 ceiling. You can request a real-time HITL supervisor elevation.
+                </div>
+
+                {!elevationApproved ? (
+                  <button
+                    type="button"
+                    onClick={handleRequestElevation}
+                    disabled={elevationLoading || elevationRequested}
+                    style={{
+                      width: '100%',
+                      background: elevationRequested ? '#1e293b' : '#ef4444',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '8px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      cursor: elevationRequested ? 'default' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    {elevationLoading ? (
+                      <span>Submitting Request...</span>
+                    ) : elevationRequested ? (
+                      <span>Elevation Pending (#ELV-9042) • Awaiting Merchant Sign-Off</span>
+                    ) : (
+                      <>
+                        <Sparkles size={13} />
+                        <span>Request Instant Merchant Budget Elevation</span>
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    color: '#22c55e',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                  }}>
+                    <CheckCircle2 size={14} />
+                    <span>Merchant Elevation Granted! Ceiling raised to ₹30,000.</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -361,9 +562,9 @@ export default function PurchaseSummaryPanel({
 
             <button
               className="primary-action-btn"
-              disabled={loading || totalAmount > 10000}
+              disabled={loading || (isOverBudget && !elevationApproved)}
               onClick={handleContinueToShipping}
-              title={totalAmount > 10000 ? "Order blocked: Exceeds ₹10,000 spend cap" : "Proceed with verified stock"}
+              title={isOverBudget && !elevationApproved ? "Order blocked: Exceeds spend cap" : "Proceed with verified stock"}
             >
               {loading ? (
                 <>

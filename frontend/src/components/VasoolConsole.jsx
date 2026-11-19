@@ -20,7 +20,16 @@ import {
   FileCheck,
   CheckCircle2,
   Terminal,
+  Zap,
+  Send,
+  MapPin,
+  Radio,
+  Sparkles,
 } from 'lucide-react';
+import AutonomousPipelineTelemetry from './AutonomousPipelineTelemetry';
+import GpsGeoFenceMap from './GpsGeoFenceMap';
+import CryptographicBlockExplorer from './CryptographicBlockExplorer';
+import { eventBus } from '../services/eventBus';
 
 const SEED_CASES = [
   {
@@ -111,6 +120,64 @@ export default function VasoolConsole({
   const [selectedDispute, setSelectedDispute] = useState(null);
   const [disputeEvidence, setDisputeEvidence] = useState('');
   const [disputeActionLoading, setDisputeActionLoading] = useState(false);
+
+  // Real-time Event Subscriptions for Dynamic HITL & Disputes
+  useEffect(() => {
+    const unsub = eventBus.subscribe('BUDGET_OVERRIDE_REQUESTED', (payload) => {
+      const newApproval = {
+        id: `apr_${Math.floor(1000 + Math.random() * 9000)}`,
+        case_id: `RX-2026-${Math.floor(100 + Math.random() * 900)}`,
+        action: 'SPEND_CAP_ELEVATION',
+        amount_minor: payload?.amount || 1500000,
+        currency: 'INR',
+        expires_at: Math.floor(Date.now() / 1000) + 600,
+        draft_hash: 'elev_hash_99a',
+        read_back_text: `Authorize spend elevation to ₹${(((payload?.amount || 0) / 100)).toLocaleString('en-IN')} for ${payload?.customerName || 'Customer'} (Exceeds ₹10k ceiling)`,
+        read_back_hash: null,
+        status: 'pending',
+      };
+      setApprovals((prev) => [newApproval, ...prev]);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleSimulateDisputeWebhook = async (reason = 'MERCHANDISE_OR_SERVICE_NOT_RECEIVED') => {
+    try {
+      const res = await fetch('/api/disputes/simulate-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: 'CUSTOMER_DISPUTE_CREATED',
+          dispute_type: reason,
+          amount: 349.00,
+          currency: 'USD',
+          buyer_name: 'Priya Sundaram',
+          carrier: 'BlueDart Express',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.dispute) {
+          const newCase = {
+            id: data.dispute.id,
+            customer: data.dispute.buyer?.name || 'Priya Sundaram',
+            amount_minor: Math.round(parseFloat(data.dispute.dispute_amount?.value || 349) * 100),
+            currency: data.dispute.dispute_amount?.currency || 'USD',
+            state: 'waiting_for_evidence',
+            risk_score: 55,
+            deadline: data.dispute.seller_response_due_date || '2026-11-25T18:00:00Z',
+            channel: 'PayPal Webhook Edge',
+            attempt_no: 1,
+            notes: data.dispute.evidence_draft?.text || 'Dispute created via PayPal webhook.',
+          };
+          setCases((prev) => [newCase, ...prev]);
+          eventBus.emit('DISPUTE_SIMULATED', { disputeId: data.dispute.id });
+        }
+      }
+    } catch (err) {
+      console.warn('Webhook simulation notice:', err);
+    }
+  };
 
   // Voice session state
   const [voiceState, setVoiceState] = useState('idle'); // idle | recording | transcribing | thinking | speaking
@@ -385,6 +452,11 @@ export default function VasoolConsole({
     setApprovals((prev) =>
       prev.map((a) => (a.id === approvalId ? { ...a, status: 'approved' } : a))
     );
+    eventBus.emit('BUDGET_OVERRIDE_APPROVED', {
+      approvalId,
+      voucherCode: 'OVERRIDE_APPROVED',
+      status: 'approved',
+    });
   };
 
   const handleReject = (approvalId) => {
@@ -766,10 +838,65 @@ export default function VasoolConsole({
           </div>
         )}
 
-        {/* TAB 2: CASES TABLE */}
+        {/* TAB 2: CASES TABLE & AUTONOMOUS RECOVERY PIPELINE */}
         {activeTab === 'cases' && (
-          <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '16px', padding: '24px' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px' }}>Recovery & Dispute Cases</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Autonomous Multi-Agent Recovery Pipeline Telemetry Console */}
+            <AutonomousPipelineTelemetry
+              activeCaseId="RX-2026-0042"
+              amountFormatted="₹4,200.00"
+              customerName="Aarav Sharma"
+            />
+
+            <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '16px', padding: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>Recovery & Dispute Cases</h2>
+
+                {/* PayPal Webhook Simulation Edge Controls */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    onClick={() => handleSimulateDisputeWebhook('MERCHANDISE_OR_SERVICE_NOT_RECEIVED')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: 'rgba(56, 189, 248, 0.1)',
+                      color: '#38bdf8',
+                      border: '1px solid rgba(56, 189, 248, 0.3)',
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                    title="Simulate incoming PayPal 'Item Not Received' dispute webhook"
+                  >
+                    <Zap size={13} />
+                    <span>Simulate INR Dispute Webhook</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleSimulateDisputeWebhook('UNAUTHORIZED_TRANSACTION')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      background: 'rgba(245, 158, 11, 0.1)',
+                      color: '#f59e0b',
+                      border: '1px solid rgba(245, 158, 11, 0.3)',
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                    title="Simulate incoming PayPal 'Unauthorized Transaction' dispute webhook"
+                  >
+                    <Radio size={13} />
+                    <span>Simulate Fraud Dispute Webhook</span>
+                  </button>
+                </div>
+              </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                 <thead>
@@ -908,34 +1035,15 @@ export default function VasoolConsole({
                     </button>
                   </div>
 
-                  {/* Carrier Proof Verification Card */}
-                  <div style={{
-                    background: '#0a0f1d',
-                    border: '1px solid #1e293b',
-                    borderRadius: '12px',
-                    padding: '16px',
-                    marginBottom: '20px',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#38bdf8' }}>
-                        CARRIER DELIVERY PROOF (KERNEL VERIFIED)
-                      </span>
-                      <span style={{
-                        background: 'rgba(34, 197, 94, 0.15)',
-                        color: '#22c55e',
-                        padding: '2px 8px',
-                        borderRadius: '6px',
-                        fontSize: '11px',
-                        fontWeight: 600,
-                      }}>
-                        DELIVERED & SIGNED
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: 1.6 }}>
-                      <div>Carrier: <strong>UPS Ground</strong> • Tracking: <strong style={{ color: '#38bdf8' }}>1Z9999999999999999</strong></div>
-                      <div>Delivered: <strong>Nov 10, 2026 @ 2:22 PM</strong> • Signed by: <strong>M. VANCE</strong></div>
-                      <div style={{ color: '#22c55e', marginTop: '6px' }}>✓ Signature match & GPS delivery coordinates confirmed against PayPal registered shipping address.</div>
-                    </div>
+                  {/* Carrier Proof Verification Card & Interactive GPS Map */}
+                  <div style={{ marginBottom: '20px' }}>
+                    <GpsGeoFenceMap
+                      disputeId={selectedDispute.id}
+                      buyerName={selectedDispute.customer}
+                      trackingNumber="BLR-892019482"
+                      carrier="BlueDart Express"
+                      address="100 Feet Road, Indiranagar, Bengaluru, KA"
+                    />
                   </div>
 
                   {/* AI Evidence Draft */}
@@ -1020,6 +1128,7 @@ export default function VasoolConsole({
                 </div>
               </div>
             )}
+            </div>
           </div>
         )}
 
@@ -1154,9 +1263,13 @@ export default function VasoolConsole({
           </div>
         )}
 
-        {/* TAB 4: CANONICAL CRYPTOGRAPHIC LEDGER */}
+        {/* TAB 4: CANONICAL CRYPTOGRAPHIC LEDGER & BLOCK EXPLORER */}
         {activeTab === 'ledger' && (
-          <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '16px', padding: '24px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Interactive Block Chain Explorer & Tamper Sandbox */}
+            <CryptographicBlockExplorer />
+
+            <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '16px', padding: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
               <div>
                 <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>Unified Canonical Cryptographic Ledger</h2>
@@ -1253,7 +1366,8 @@ export default function VasoolConsole({
               </table>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
         {/* TAB 5: METRICS & RED TEAM (Section 5.2) */}
         {activeTab === 'metrics' && (

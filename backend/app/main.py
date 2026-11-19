@@ -165,7 +165,7 @@ ROLES_REGISTRY: Dict[str, Dict[str, Any]] = {
         "name": "Vasool Recovery Admin (Full Access)",
         "badge": "Admin",
         "icon": "ShieldCheck",
-        "description": "Autonomous LangGraph recovery, Gnani voice terminal, HITL approvals, and cryptographic ledger",
+        "description": "Autonomous recovery pipeline, Gnani voice terminal, HITL approvals, and cryptographic ledger",
         "permissions": ["*"]
     }
 }

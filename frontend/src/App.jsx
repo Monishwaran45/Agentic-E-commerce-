@@ -14,6 +14,7 @@ import Header from './components/Header';
 import CatalogSidebar from './components/CatalogSidebar';
 import ChatPanel from './components/ChatPanel';
 import PurchaseSummaryPanel from './components/PurchaseSummaryPanel';
+import ToastNotification from './components/ToastNotification';
 
 const AuditLogPanel = lazy(() => import('./components/AuditLogPanel'));
 const CatalogPanel = lazy(() => import('./components/CatalogPanel'));
@@ -62,7 +63,7 @@ const ROLE_TABS = {
   admin: [
     { id: 'shopping', label: 'Shopping Assistant', icon: ShoppingBag },
     { id: 'catalog', label: 'Catalog & Inventory', icon: Library },
-    { id: 'recovery', label: 'Vasool Recovery (LangGraph)', icon: Sparkles },
+    { id: 'recovery', label: 'Vasool Recovery Engine', icon: Sparkles },
     { id: 'voice_ops', label: 'Gnani Voice Terminal', icon: Mic },
     { id: 'disputes', label: 'PayPal Disputes', icon: Scale },
     { id: 'approvals', label: 'HITL Approvals', icon: Clock },
@@ -479,7 +480,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: VASOOL AUTONOMOUS RECOVERY (LangGraph Orchestrator) */}
+        {/* TAB 3: VASOOL AUTONOMOUS RECOVERY (Multi-Agent Orchestrator) */}
         {activeTab === 'recovery' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
             <Suspense fallback={<ViewLoader />}>
@@ -546,6 +547,8 @@ export default function App() {
           />
         )}
       </Suspense>
+      {/* Real-time Enterprise Event Notification Toasts */}
+      <ToastNotification />
     </div>
   );
 }

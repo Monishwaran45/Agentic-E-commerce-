@@ -19,7 +19,7 @@ const ROLES = [
   { id: 'shopper', label: 'Customer / Shopper', badge: 'Shopper', icon: ShoppingBag, color: '#38bdf8', desc: 'Shop, voice search & checkout' },
   { id: 'merchant', label: 'Merchant Operations', badge: 'Merchant', icon: Store, color: '#22c55e', desc: 'Inventory, guardrails & audit' },
   { id: 'dispute_analyst', label: 'Dispute Analyst', badge: 'Disputes', icon: Scale, color: '#a855f7', desc: 'PayPal defense & carrier proofs' },
-  { id: 'admin', label: 'Vasool Recovery Admin', badge: 'Admin (Full)', icon: ShieldCheck, color: '#ef4444', desc: 'LangGraph, voice ops & ledger' },
+  { id: 'admin', label: 'Vasool Recovery Admin', badge: 'Admin (Full)', icon: ShieldCheck, color: '#ef4444', desc: 'Autonomous recovery, voice ops & ledger' },
 ];
 
 export default function Header({
@@ -281,7 +281,7 @@ export default function Header({
                 <strong>Voice Engine:</strong> Gnani.ai Vach/Prisma ASR & Timbre TTS
               </div>
               <div>
-                <strong>Autonomous Recovery:</strong> LangGraph StateGraph (8 Orchestrated Nodes)
+                <strong>Autonomous Recovery:</strong> Vasool Multi-Agent Engine (8 Orchestrated Nodes)
               </div>
               <div>
                 <strong>Dispute Resolution:</strong> PayPal Copilot Edge with Legal Defense Generator

@@ -203,3 +203,69 @@ def get_timeline():
 @router.get("/audit")
 def get_audit():
     return {"audit_trail": []}
+
+
+class WebhookSimRequest(BaseModel):
+    event_type: str = "CUSTOMER_DISPUTE_CREATED"
+    dispute_type: Optional[str] = "MERCHANDISE_OR_SERVICE_NOT_RECEIVED"
+    amount: Optional[float] = 349.00
+    currency: Optional[str] = "USD"
+    buyer_name: Optional[str] = "Priya Sundaram"
+    carrier: Optional[str] = "BlueDart Express"
+
+
+@router.post("/api/disputes/simulate-webhook")
+@router.post("/disputes/simulate-webhook")
+def simulate_dispute_webhook(req: WebhookSimRequest):
+    new_id = f"PP-D-{int(time.time()) % 10000000}"
+    tracking_num = f"BLR{int(time.time()) % 1000000}"
+    
+    new_dispute = {
+        "id": new_id,
+        "dispute_id": new_id,
+        "status": "WAITING_FOR_SELLER_RESPONSE",
+        "dispute_amount": {"currency": req.currency or "USD", "value": f"{req.amount:.2f}"},
+        "reason": req.dispute_type or "MERCHANDISE_OR_SERVICE_NOT_RECEIVED",
+        "seller_response_due_date": "2026-11-25T18:00:00Z",
+        "order_id": f"ORD-{int(time.time()) % 100000}",
+        "transaction_id": f"TRX-{int(time.time()) % 10000000}X",
+        "buyer": {
+            "name": req.buyer_name or "Priya Sundaram",
+            "email": "priya.sundaram@example.com",
+            "shipping_address": {
+                "line1": "100 Feet Road, Indiranagar",
+                "city": "Bengaluru",
+                "state": "KA",
+                "postal_code": "560038",
+                "country_code": "IN"
+            }
+        },
+        "carrier_proof": {
+            "carrier": req.carrier or "BlueDart Express",
+            "tracking_number": tracking_num,
+            "status": "DELIVERED",
+            "delivery_date": "2026-11-18T16:45:12Z",
+            "signed_by": (req.buyer_name or "P. Sundaram").upper(),
+            "has_signature": True,
+            "carrier_verified": True,
+            "kernel_audit_id": f"KERNEL-CERT-{int(time.time()) % 10000}",
+            "delivery_address_verified": True,
+            "gps_coordinates": {
+                "latitude": 12.9716,
+                "longitude": 77.5946,
+                "geo_fence_radius_meters": 15,
+                "geo_fence_status": "WITHIN_DELIVERY_ZONE",
+                "dropoff_point": "Front Porch / Handed to Resident"
+            }
+        },
+        "evidence_draft": {
+            "text": f"Autonomous defense generated: Item was dispatched via {req.carrier or 'BlueDart Express'} (Tracking: {tracking_num}) and delivered inside confirmed geo-fence (12.9716, 77.5946). Buyer signature recorded. In accordance with PayPal Seller Protection §11.2, claim is refuted.",
+            "proofs": ["GPS_GEO_FENCE_CERT", "CARRIER_SIGNATURE_SLIP", "DISPATCH_MANIFEST"]
+        },
+        "seller_approval": {"approved": False, "conceded": False}
+    }
+    
+    _DISPUTES_DB[new_id] = new_dispute
+    save_disputes()
+    return {"success": True, "event": req.event_type, "dispute": new_dispute}
+

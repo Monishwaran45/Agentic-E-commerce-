@@ -965,6 +965,38 @@ def verify_ledger_chain_endpoint():
     is_valid, report = ledger.verify_chain()
     return report
 
+class HITLRequestPayload(BaseModel):
+    case_id: Optional[str] = None
+    action: str = "SPEND_CAP_ELEVATION"
+    requested_amount_minor: int = 1500000
+    currency: str = "INR"
+    customer_name: Optional[str] = "Customer"
+    reason: Optional[str] = "High-value catalog purchase elevation request"
+
+@router.post("/api/recovery/hitl-request")
+def submit_hitl_request(payload: HITLRequestPayload):
+    req_id = f"apr_{int(time.time()) % 100000}"
+    case_id = payload.case_id or f"RX-{int(time.time()) % 10000}"
+    item = {
+        "id": req_id,
+        "case_id": case_id,
+        "action": payload.action,
+        "amount_minor": payload.requested_amount_minor,
+        "currency": payload.currency,
+        "expires_at": int(time.time()) + 900,
+        "customer_name": payload.customer_name or "Customer",
+        "read_back_text": f"Authorize {payload.action.lower().replace('_', ' ')} of ₹{payload.requested_amount_minor / 100:.2f} for {payload.customer_name or 'customer'} ({payload.reason})",
+        "status": "pending",
+        "created_at": int(time.time())
+    }
+    ledger.append_entry(
+        event_type="hitl_request_created",
+        ref_id=req_id,
+        payload=item
+    )
+    return {"success": True, "approval": item}
+
+
 @router.post("/api/recovery/reset")
 def reset_recovery_endpoint(
     x_service_token: Optional[str] = Header(None, alias="X-Service-Token"),
