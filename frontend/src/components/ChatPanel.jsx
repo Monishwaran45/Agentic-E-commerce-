@@ -407,6 +407,8 @@ export default function ChatPanel({
           if (onSelectProduct && res.products?.[0]) {
             onSelectProduct(res.products[0], res.order.quantity || 1);
           }
+        } else if (res.products && res.products.length > 0 && onSelectProduct) {
+          onSelectProduct(res.products[0], 1);
         }
 
         // Also add conversation turn to the main chat messages view
