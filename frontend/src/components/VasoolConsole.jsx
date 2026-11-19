@@ -29,6 +29,7 @@ import {
 import AutonomousPipelineTelemetry from './AutonomousPipelineTelemetry';
 import GpsGeoFenceMap from './GpsGeoFenceMap';
 import CryptographicBlockExplorer from './CryptographicBlockExplorer';
+import ArbitrationCertificateModal from './ArbitrationCertificateModal';
 import { eventBus } from '../services/eventBus';
 
 const SEED_CASES = [
@@ -120,6 +121,7 @@ export default function VasoolConsole({
   const [selectedDispute, setSelectedDispute] = useState(null);
   const [disputeEvidence, setDisputeEvidence] = useState('');
   const [disputeActionLoading, setDisputeActionLoading] = useState(false);
+  const [showCertModal, setShowCertModal] = useState(false);
 
   // Real-time Event Subscriptions for Dynamic HITL & Disputes
   useEffect(() => {
@@ -1089,12 +1091,13 @@ export default function VasoolConsole({
                   </div>
 
                   {/* Action Buttons */}
-                  <div style={{ display: 'flex', gap: '10px' }}>
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                     <button
                       onClick={() => handleApproveDispute(selectedDispute.id)}
                       disabled={disputeActionLoading}
                       style={{
                         flex: 2,
+                        minWidth: '200px',
                         background: '#22c55e',
                         color: '#ffffff',
                         border: 'none',
@@ -1108,10 +1111,34 @@ export default function VasoolConsole({
                       {disputeActionLoading ? 'Submitting...' : 'Approve & Submit Dispute Defense'}
                     </button>
                     <button
+                      type="button"
+                      onClick={() => setShowCertModal(true)}
+                      style={{
+                        flex: 1.2,
+                        minWidth: '160px',
+                        background: '#0284c7',
+                        color: '#ffffff',
+                        border: 'none',
+                        padding: '12px',
+                        borderRadius: '8px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <FileCheck size={14} />
+                      <span>Export Certificate (PDF)</span>
+                    </button>
+                    <button
                       onClick={() => handleRejectDispute(selectedDispute.id)}
                       disabled={disputeActionLoading}
                       style={{
                         flex: 1,
+                        minWidth: '120px',
                         background: '#ef4444',
                         color: '#ffffff',
                         border: 'none',
@@ -1127,6 +1154,15 @@ export default function VasoolConsole({
                   </div>
                 </div>
               </div>
+            )}
+
+            {/* Arbitration Certificate Modal */}
+            {showCertModal && (
+              <ArbitrationCertificateModal
+                isOpen={showCertModal}
+                onClose={() => setShowCertModal(false)}
+                disputeData={selectedDispute}
+              />
             )}
             </div>
           </div>

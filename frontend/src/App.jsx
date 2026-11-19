@@ -9,6 +9,9 @@ import {
   Database,
   ShieldCheck,
   Store,
+  Users,
+  Smartphone,
+  Bug,
 } from 'lucide-react';
 import Header from './components/Header';
 import CatalogSidebar from './components/CatalogSidebar';
@@ -20,6 +23,9 @@ const AuditLogPanel = lazy(() => import('./components/AuditLogPanel'));
 const CatalogPanel = lazy(() => import('./components/CatalogPanel'));
 const RecoveryPayPage = lazy(() => import('./components/RecoveryPayPage'));
 const VasoolConsole = lazy(() => import('./components/VasoolConsole'));
+const MultiAgentWarRoom = lazy(() => import('./components/MultiAgentWarRoom'));
+const OmnichannelPhoneSimulator = lazy(() => import('./components/OmnichannelPhoneSimulator'));
+const RedTeamSecuritySandbox = lazy(() => import('./components/RedTeamSecuritySandbox'));
 
 function ViewLoader() {
   return (
@@ -58,16 +64,19 @@ const ROLE_TABS = {
   ],
   dispute_analyst: [
     { id: 'disputes', label: 'PayPal Dispute Center', icon: Scale },
+    { id: 'war_room', label: 'Agent Consensus War Room', icon: Users },
     { id: 'guardrails', label: 'Security & Audit Logs', icon: ShieldCheck },
   ],
   admin: [
     { id: 'shopping', label: 'Shopping Assistant', icon: ShoppingBag },
     { id: 'catalog', label: 'Catalog & Inventory', icon: Library },
     { id: 'recovery', label: 'Vasool Recovery Engine', icon: Sparkles },
-    { id: 'voice_ops', label: 'Gnani Voice Terminal', icon: Mic },
+    { id: 'war_room', label: 'Multi-Agent War Room', icon: Users },
+    { id: 'omnichannel', label: 'WhatsApp & SMS Ops', icon: Smartphone },
     { id: 'disputes', label: 'PayPal Disputes', icon: Scale },
     { id: 'approvals', label: 'HITL Approvals', icon: Clock },
     { id: 'ledger', label: 'Cryptographic Ledger', icon: Database },
+    { id: 'red_team', label: 'Red-Team Security Sandbox', icon: Bug },
     { id: 'guardrails', label: 'Security Matrix', icon: ShieldCheck },
   ],
 };
@@ -525,7 +534,34 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 8: GUARDRAILS & SECURITY MATRIX */}
+        {/* TAB 8: MULTI-AGENT COLLABORATIVE WAR ROOM */}
+        {activeTab === 'war_room' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <MultiAgentWarRoom />
+            </Suspense>
+          </div>
+        )}
+
+        {/* TAB 9: OMNICHANNEL WHATSAPP & SMS SIMULATOR */}
+        {activeTab === 'omnichannel' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <OmnichannelPhoneSimulator />
+            </Suspense>
+          </div>
+        )}
+
+        {/* TAB 10: RED-TEAM PENETRATION & SECURITY SANDBOX */}
+        {activeTab === 'red_team' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <RedTeamSecuritySandbox />
+            </Suspense>
+          </div>
+        )}
+
+        {/* TAB 11: GUARDRAILS & SECURITY MATRIX */}
         {activeTab === 'guardrails' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
             <Suspense fallback={<ViewLoader />}>

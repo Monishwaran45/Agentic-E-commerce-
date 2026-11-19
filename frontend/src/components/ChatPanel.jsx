@@ -18,10 +18,12 @@ import {
   Globe,
   Tag,
   Sparkles,
+  Camera,
 } from 'lucide-react';
 import AgentWorkflowBar from './AgentWorkflowBar';
 import ComparisonMatrixModal from './ComparisonMatrixModal';
 import AudioWaveformVisualizer from './AudioWaveformVisualizer';
+import VisualSearchModal from './VisualSearchModal';
 import { eventBus } from '../services/eventBus';
 
 const GNANI_LANGUAGES = [
@@ -173,6 +175,7 @@ export default function ChatPanel({
   const [isListening, setIsListening] = useState(false);
   const [voiceLang, setVoiceLang] = useState('en-IN');
   const [showLangMenu, setShowLangMenu] = useState(false);
+  const [visualSearchOpen, setVisualSearchOpen] = useState(false);
   const [playingMsgId, setPlayingMsgId] = useState(null);
   const recognitionRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -727,6 +730,30 @@ export default function ChatPanel({
 
             <button
               type="button"
+              onClick={() => setVisualSearchOpen(true)}
+              className="voice-mic-btn"
+              title="Snap to Shop (Visual Search)"
+              style={{
+                background: 'transparent',
+                color: 'var(--text-muted)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '50%',
+                width: '36px',
+                height: '36px',
+                minWidth: '36px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                marginRight: '6px',
+              }}
+            >
+              <Camera size={16} />
+            </button>
+
+            <button
+              type="button"
               onClick={toggleVoiceListening}
               className={`voice-mic-btn ${isListening ? 'active' : ''}`}
               title={isListening ? "Stop listening" : "Speak with Gnani Voice Assistant"}
@@ -754,6 +781,14 @@ export default function ChatPanel({
           </form>
         </div>
       </div>
+
+      {visualSearchOpen && (
+        <VisualSearchModal
+          isOpen={visualSearchOpen}
+          onClose={() => setVisualSearchOpen(false)}
+          onSelectProduct={onSelectProduct}
+        />
+      )}
 
       {comparisonModalItems && (
         <ComparisonMatrixModal
