@@ -1011,6 +1011,12 @@ def verify_audit_access(
                 status_code=401,
                 detail="Unauthorized: Global audit trail access requires valid admin credentials (X-Admin-Key or Authorization header) or session_id scoping."
             )
+    else:
+        # Fail closed: require session_id scoping when no global admin key is configured
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Global audit trail access requires valid admin credentials or session_id scoping."
+        )
 
 
 @app.get("/api/audit-logs")
