@@ -12,6 +12,9 @@ import {
   Users,
   Smartphone,
   Bug,
+  Compass,
+  HelpCircle,
+  Lightbulb,
 } from 'lucide-react';
 import Header from './components/Header';
 import CatalogSidebar from './components/CatalogSidebar';
@@ -26,6 +29,7 @@ const VasoolConsole = lazy(() => import('./components/VasoolConsole'));
 const MultiAgentWarRoom = lazy(() => import('./components/MultiAgentWarRoom'));
 const OmnichannelPhoneSimulator = lazy(() => import('./components/OmnichannelPhoneSimulator'));
 const RedTeamSecuritySandbox = lazy(() => import('./components/RedTeamSecuritySandbox'));
+const SimpleMissionHub = lazy(() => import('./components/SimpleMissionHub'));
 
 function ViewLoader() {
   return (
@@ -52,34 +56,130 @@ import {
 } from './services/api';
 import catalogData from './data/catalog.json';
 
-const ROLE_TABS = {
-  shopper: [
-    { id: 'shopping', label: 'Shopping Assistant', icon: ShoppingBag },
-    { id: 'catalog', label: 'Browse Catalog', icon: Library },
-  ],
-  merchant: [
-    { id: 'shopping', label: 'Storefront Assistant', icon: ShoppingBag },
-    { id: 'catalog', label: 'Catalog & Inventory', icon: Library },
-    { id: 'guardrails', label: 'Spend & Guardrails', icon: ShieldCheck },
-  ],
-  dispute_analyst: [
-    { id: 'disputes', label: 'PayPal Dispute Center', icon: Scale },
-    { id: 'war_room', label: 'Agent Consensus War Room', icon: Users },
-    { id: 'guardrails', label: 'Security & Audit Logs', icon: ShieldCheck },
-  ],
-  admin: [
-    { id: 'shopping', label: 'Shopping Assistant', icon: ShoppingBag },
-    { id: 'catalog', label: 'Catalog & Inventory', icon: Library },
-    { id: 'recovery', label: 'Vasool Recovery Engine', icon: Sparkles },
-    { id: 'war_room', label: 'Multi-Agent War Room', icon: Users },
-    { id: 'omnichannel', label: 'WhatsApp & SMS Ops', icon: Smartphone },
-    { id: 'disputes', label: 'PayPal Disputes', icon: Scale },
-    { id: 'approvals', label: 'HITL Approvals', icon: Clock },
-    { id: 'ledger', label: 'Cryptographic Ledger', icon: Database },
-    { id: 'red_team', label: 'Red-Team Security Sandbox', icon: Bug },
-    { id: 'guardrails', label: 'Security Matrix', icon: ShieldCheck },
-  ],
-};
+const NAVIGATION_CATEGORIES = [
+  {
+    id: 'hub',
+    label: 'Mission Hub',
+    simpleLabel: 'Adventure Map',
+    icon: Compass,
+    roles: ['admin', 'merchant', 'dispute_analyst'],
+    tabs: [
+      {
+        id: 'hub',
+        label: 'Mission Hub',
+        simpleLabel: 'All Adventures',
+        icon: Compass,
+        tip: 'Welcome to your AI Adventure Map! Click any card to explore shopping, robot meetings, delivery maps, or hacker shields.',
+      },
+    ],
+  },
+  {
+    id: 'store',
+    label: 'Store & Shopping',
+    simpleLabel: 'Shop & Items',
+    icon: Store,
+    roles: ['admin', 'shopper', 'merchant'],
+    tabs: [
+      {
+        id: 'shopping',
+        label: 'Shopping Assistant',
+        simpleLabel: 'Shop with AI Friend',
+        icon: ShoppingBag,
+        tip: 'Chat with your AI shopping buddy! You can type in Hindi/Tamil, tap the microphone to talk, or use "Snap to Shop" for photo search.',
+      },
+      {
+        id: 'catalog',
+        label: 'Browse Catalog',
+        simpleLabel: 'Item & Toy Shelf',
+        icon: Library,
+        tip: 'See all items available in our store! Filter shoes, shirts, electronics, and tap any item to ask AI for a deal.',
+      },
+    ],
+  },
+  {
+    id: 'disputes_nav',
+    label: 'Delivery & Proof',
+    simpleLabel: 'Delivery Map',
+    icon: Scale,
+    roles: ['admin', 'dispute_analyst'],
+    tabs: [
+      {
+        id: 'disputes',
+        label: 'Dispute Center & GPS',
+        simpleLabel: 'Delivery Satellite Map',
+        icon: Scale,
+        tip: 'See real satellite delivery locations, 15m radius geofences, and customer signatures proving delivery.',
+      },
+      {
+        id: 'approvals',
+        label: 'Human Review Inbox',
+        simpleLabel: 'Human Helper Inbox',
+        icon: Clock,
+        tip: 'When AI wants human advice on big refund decisions, approvals wait here for a single click.',
+      },
+    ],
+  },
+  {
+    id: 'ai_ops',
+    label: 'AI Operations',
+    simpleLabel: '4 AI Robots',
+    icon: Users,
+    roles: ['admin', 'dispute_analyst'],
+    tabs: [
+      {
+        id: 'war_room',
+        label: 'Multi-Agent War Room',
+        simpleLabel: '4 AI Robots Meeting',
+        icon: Users,
+        tip: 'Watch 4 friendly AI robots (Guard, Driver, Price Helper, Legal Expert) debate and vote with 100% agreement.',
+      },
+      {
+        id: 'omnichannel',
+        label: 'WhatsApp & SMS Ops',
+        simpleLabel: 'Customer WhatsApp Phone',
+        icon: Smartphone,
+        tip: 'Play with a simulated customer smartphone! Chat on WhatsApp, try split payments, or hear automated voice calls.',
+      },
+      {
+        id: 'recovery',
+        label: 'Vasool Recovery Engine',
+        simpleLabel: 'Vasool Autopilot',
+        icon: Sparkles,
+        tip: 'The automated recovery brain managing customer cases, payment tracking, and autonomous notifications.',
+      },
+    ],
+  },
+  {
+    id: 'security_nav',
+    label: 'Safety & Vault',
+    simpleLabel: 'Safety Vault',
+    icon: ShieldCheck,
+    roles: ['admin', 'merchant', 'dispute_analyst'],
+    tabs: [
+      {
+        id: 'ledger',
+        label: 'Cryptographic Ledger',
+        simpleLabel: 'Tamper-Proof Lockbox',
+        icon: Database,
+        tip: 'A digital chain of unbreakable lockboxes. Try the "Simulate Attack" button to watch the security alarm sound!',
+      },
+      {
+        id: 'red_team',
+        label: 'Red-Team Security Sandbox',
+        simpleLabel: 'Hacker Defense Game',
+        icon: Bug,
+        tip: 'Launch pretend cyber-attacks (like jailbreaks and expired receipts) and watch our shields block them in <15ms.',
+      },
+      {
+        id: 'guardrails',
+        label: 'Security Matrix & Spend Cap',
+        simpleLabel: 'Safety Rules & Budget',
+        icon: ShieldCheck,
+        tip: 'Hard safety rules: AI is strictly blocked from spending over ₹10,000 or skipping customer permissions.',
+      },
+    ],
+  },
+];
 
 function hydrateMessages(rawMessages) {
   if (!Array.isArray(rawMessages)) return [];
@@ -137,8 +237,27 @@ export default function App() {
     if (currentPath === '/console' || currentPath.startsWith('/console/')) {
       return 'recovery';
     }
-    return 'shopping';
+    const storedRole = localStorage.getItem('user_role_pref') || 'admin';
+    return storedRole === 'shopper' ? 'shopping' : 'hub';
   });
+
+  // Kid-Friendly / Easy Mode Toggle (defaults to true for clean, friendly UX)
+  const [simpleMode, setSimpleMode] = useState(() => {
+    return localStorage.getItem('simple_mode_pref') !== 'false';
+  });
+
+  const toggleSimpleMode = () => {
+    setSimpleMode((prev) => {
+      const next = !prev;
+      localStorage.setItem('simple_mode_pref', String(next));
+      return next;
+    });
+  };
+
+  const availableCategories = NAVIGATION_CATEGORIES.filter((cat) => cat.roles.includes(userRole));
+  const currentCategory = availableCategories.find((cat) => cat.tabs.some((t) => t.id === activeTab)) || availableCategories[0];
+  const allAvailableTabs = availableCategories.flatMap((cat) => cat.tabs);
+  const currentTabObj = allAvailableTabs.find((t) => t.id === activeTab) || allAvailableTabs[0];
 
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem('theme_pref') || 'dark';
@@ -169,9 +288,17 @@ export default function App() {
   const handleRoleChange = (newRole) => {
     setUserRole(newRole);
     setStoredRole(newRole);
-    const validTabs = (ROLE_TABS[newRole] || []).map((t) => t.id);
+    const newCategories = NAVIGATION_CATEGORIES.filter((cat) => cat.roles.includes(newRole));
+    const validTabs = newCategories.flatMap((cat) => cat.tabs.map((t) => t.id));
     if (!validTabs.includes(activeTab)) {
-      setActiveTab(validTabs[0] || 'shopping');
+      setActiveTab(newRole === 'shopper' ? 'shopping' : (validTabs[0] || 'shopping'));
+    }
+  };
+
+  const handleSelectCategory = (cat) => {
+    if (cat.tabs.some((t) => t.id === activeTab)) return;
+    if (cat.tabs.length > 0) {
+      setActiveTab(cat.tabs[0].id);
     }
   };
 
@@ -316,7 +443,6 @@ export default function App() {
 
   const blockedCount = auditLogs.filter((l) => l.result === 'BLOCKED').length;
   const currentSpend = selectedProduct ? (selectedProduct.price || 0) * selectedQty : 0;
-  const availableTabs = ROLE_TABS[userRole] || ROLE_TABS.shopper;
 
   return (
     <div className="app-container" data-theme={theme} style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -345,7 +471,7 @@ export default function App() {
         onChangeRole={handleRoleChange}
       />
 
-      {/* Role-Based Workspace Navigation Bar */}
+      {/* Level 1: Primary Category Bar */}
       <nav
         style={{
           background: '#0d1322',
@@ -354,15 +480,104 @@ export default function App() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: '8px',
+          gap: '12px',
           overflowX: 'auto',
           flexShrink: 0,
         }}
       >
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'nowrap' }}>
-          {availableTabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'nowrap' }}>
+          {availableCategories.map((cat) => {
+            const Icon = cat.icon;
+            const isCatActive = currentCategory?.id === cat.id;
+            return (
+              <button
+                key={cat.id}
+                onClick={() => handleSelectCategory(cat)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '7px',
+                  padding: '7px 16px',
+                  borderRadius: '10px',
+                  fontSize: '13px',
+                  fontWeight: isCatActive ? 700 : 500,
+                  border: isCatActive ? '1px solid #38bdf8' : '1px solid transparent',
+                  background: isCatActive ? 'linear-gradient(135deg, rgba(56, 189, 248, 0.2) 0%, rgba(14, 165, 233, 0.08) 100%)' : 'transparent',
+                  color: isCatActive ? '#38bdf8' : '#94a3b8',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.15s ease',
+                  boxShadow: isCatActive ? '0 0 14px rgba(56, 189, 248, 0.2)' : 'none',
+                }}
+              >
+                <Icon size={16} />
+                <span>{simpleMode ? cat.simpleLabel : cat.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Right Nav Utilities: Kids / Pro Mode Toggle + Role Tag */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+          <button
+            onClick={toggleSimpleMode}
+            title={simpleMode ? "Switch to Pro View (technical labels & metrics)" : "Switch to Easy Mode (simplified labels & guide tips)"}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              borderRadius: '20px',
+              fontSize: '11px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              background: simpleMode ? 'rgba(34, 197, 94, 0.18)' : 'rgba(148, 163, 184, 0.12)',
+              border: simpleMode ? '1px solid rgba(34, 197, 94, 0.45)' : '1px solid rgba(148, 163, 184, 0.25)',
+              color: simpleMode ? '#4ade80' : '#94a3b8',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <span>{simpleMode ? '👶 Easy Mode: ON' : '💼 Pro View'}</span>
+          </button>
+
+          <div style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>Role:</span>
+            <span style={{
+              background: 'rgba(56, 189, 248, 0.15)',
+              color: '#38bdf8',
+              padding: '2px 8px',
+              borderRadius: '6px',
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              fontSize: '10px',
+              letterSpacing: '0.04em',
+            }}>
+              {userRole}
+            </span>
+          </div>
+        </div>
+      </nav>
+
+      {/* Level 2: Sub-Nav Bar (Clean Pill Tabs for Current Category) */}
+      {currentCategory && currentCategory.tabs.length > 1 && (
+        <div
+          style={{
+            background: '#090d16',
+            borderBottom: '1px solid #1e293b',
+            padding: '6px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            overflowX: 'auto',
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginRight: '4px' }}>
+            {simpleMode ? currentCategory.simpleLabel : currentCategory.label}:
+          </span>
+          {currentCategory.tabs.map((tab) => {
+            const TabIcon = tab.icon;
+            const isTabActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
@@ -371,42 +586,75 @@ export default function App() {
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '6px',
-                  padding: '6px 14px',
-                  borderRadius: '8px',
+                  padding: '5px 12px',
+                  borderRadius: '6px',
                   fontSize: '12px',
-                  fontWeight: 600,
-                  border: isActive ? '1px solid #38bdf8' : '1px solid transparent',
-                  background: isActive ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
-                  color: isActive ? '#38bdf8' : '#94a3b8',
+                  fontWeight: isTabActive ? 600 : 500,
+                  border: isTabActive ? '1px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.05)',
+                  background: isTabActive ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                  color: isTabActive ? '#38bdf8' : '#94a3b8',
                   cursor: 'pointer',
-                  whiteSpace: 'nowrap',
                   transition: 'all 0.15s ease',
+                  whiteSpace: 'nowrap',
                 }}
               >
-                <Icon size={14} />
-                <span>{tab.label}</span>
+                <TabIcon size={13} />
+                <span>{simpleMode ? tab.simpleLabel : tab.label}</span>
               </button>
             );
           })}
         </div>
-        <div style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span>Role View:</span>
-          <span style={{
-            background: 'rgba(56, 189, 248, 0.15)',
-            color: '#38bdf8',
-            padding: '2px 8px',
-            borderRadius: '6px',
-            fontWeight: 600,
-            textTransform: 'uppercase',
-            fontSize: '10px'
-          }}>
-            {userRole}
+      )}
+
+      {/* Kid-Friendly Plain-English Helper Banner (Easy Mode Guide) */}
+      {simpleMode && currentTabObj?.tip && activeTab !== 'hub' && (
+        <div
+          style={{
+            background: 'linear-gradient(90deg, rgba(56, 189, 248, 0.08) 0%, rgba(14, 165, 233, 0.02) 100%)',
+            borderBottom: '1px solid rgba(56, 189, 248, 0.2)',
+            padding: '7px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            fontSize: '12px',
+            color: '#cbd5e1',
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              background: 'rgba(56, 189, 248, 0.2)',
+              color: '#38bdf8',
+              padding: '2px 8px',
+              borderRadius: '4px',
+              fontSize: '10px',
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            WHAT CAN YOU DO HERE?
+          </span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {currentTabObj.tip}
           </span>
         </div>
-      </nav>
+      )}
 
       {/* Dynamic Unified Workspace Content (Single Application Shell) */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* TAB 0: INTERACTIVE MISSION HUB (Kid-friendly visual cards) */}
+        {activeTab === 'hub' && (
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            <Suspense fallback={<ViewLoader />}>
+              <SimpleMissionHub
+                onNavigate={(targetTabId) => {
+                  setActiveTab(targetTabId);
+                }}
+              />
+            </Suspense>
+          </div>
+        )}
         {/* TAB 1: SHOPPING ASSISTANT (3-Column Layout with Gnani Voice) */}
         {activeTab === 'shopping' && (
           <div className="app-main-layout" style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>

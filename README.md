@@ -97,6 +97,9 @@ The application enforces unified, role-based workspace views directly within a s
 7. Real-Time Cross-Window Synchronization:
    Lightweight browser event bus utilizing BroadcastChannel for instantaneous toast alerts across tabs when orders, disputes, or spend elevation requests occur.
 
+8. Two-Level Categorized Navigation & Kid-Friendly Easy Mode:
+   Replaces crowded single-row tab bars with an intuitive two-tier navigation hierarchy (Mission Hub, Store & Shopping, Delivery & Proof, AI Operations, and Safety & Vault). Includes a global Easy Mode / Pro View toggle that provides plain-English descriptions and interactive guidance cards suitable for all audiences without sacrificing underlying cryptographic rigor.
+
 ---
 
 ## Project Structure
@@ -130,6 +133,7 @@ Agentic-E-commerce/
            MultiAgentWarRoom.jsx            # 4-agent peer-to-peer consensus war room
            OmnichannelPhoneSimulator.jsx    # Interactive WhatsApp and SMS phone mockup
            RedTeamSecuritySandbox.jsx       # Adversarial cyber attack simulator
+           SimpleMissionHub.jsx             # Kid-friendly visual Mission Hub and Adventure Map
            VisualSearchModal.jsx            # Snap to Shop computer vision search
            ToastNotification.jsx            # Real-time event toast alerts
            Header.jsx                       # RBAC role selector and status bar
