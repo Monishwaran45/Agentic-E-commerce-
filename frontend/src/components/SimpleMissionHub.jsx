@@ -16,107 +16,131 @@ import {
   Zap,
 } from 'lucide-react';
 
-const MISSION_CARDS = [
+const WORKSPACE_CARDS = [
   {
     id: 'shopping',
     category: 'store',
-    title: 'Shop with AI Friend',
-    tag: 'EASY & FUN',
+    title: 'AI Shopping Assistant',
+    tag: 'CONVERSATIONAL COMMERCE',
     tagColor: '#38bdf8',
     icon: ShoppingBag,
     color: '#38bdf8',
-    bg: 'linear-gradient(135deg, rgba(56, 189, 248, 0.15) 0%, rgba(14, 165, 233, 0.05) 100%)',
-    border: 'rgba(56, 189, 248, 0.3)',
-    summary: 'Chat with smart AI! Speak in Hindi or Tamil, snap a photo of any sneaker, or ask for a special discount.',
-    features: ['Speak in 5 Indian languages', 'Snap photo to search ("Snap to Shop")', 'Ask for dynamic discounts'],
-    btnLabel: 'Start Shopping',
+    bg: 'linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(14, 165, 233, 0.03) 100%)',
+    border: 'rgba(56, 189, 248, 0.25)',
+    summary: 'Voice-driven conversational commerce powered by Gnani Indic speech, Snap to Shop visual search, and autonomous price negotiation.',
+    features: [
+      'Indic speech recognition in 5 languages',
+      'Multimodal image search (Snap to Shop)',
+      'Autonomous price negotiation & vouchers',
+    ],
+    btnLabel: 'Launch Assistant',
   },
   {
     id: 'disputes',
     category: 'disputes',
-    title: 'Delivery Map & Dispute Solver',
-    tag: 'REAL SATELLITE GPS',
+    title: 'PayPal Dispute Center & GPS',
+    tag: 'CARRIER TELEMETRY',
     tagColor: '#a855f7',
     icon: MapPin,
     color: '#a855f7',
-    bg: 'linear-gradient(135deg, rgba(168, 85, 247, 0.15) 0%, rgba(147, 51, 234, 0.05) 100%)',
-    border: 'rgba(168, 85, 247, 0.3)',
-    summary: 'Look at a real GPS satellite map with courier breadcrumbs and customer signatures proving delivery.',
-    features: ['15-meter circular delivery zone', 'Digital signature canvas', 'Print official certificate (PDF)'],
-    btnLabel: 'View Delivery Map',
+    bg: 'linear-gradient(135deg, rgba(168, 85, 247, 0.12) 0%, rgba(147, 51, 234, 0.03) 100%)',
+    border: 'rgba(168, 85, 247, 0.25)',
+    summary: 'Carrier GPS drop-off verification featuring 15-meter geofence circles, courier breadcrumbs, and digital recipient signatures.',
+    features: [
+      '15-meter circular delivery geofences',
+      'Cryptographic recipient signatures',
+      'One-click arbitration certificate export',
+    ],
+    btnLabel: 'Open Dispute Center',
   },
   {
     id: 'war_room',
     category: 'robots',
-    title: '4 AI Robots War Room',
-    tag: 'ROBOT TEAMWORK',
+    title: 'Multi-Agent Consensus War Room',
+    tag: 'MULTI-AGENT DELIBERATION',
     tagColor: '#22c55e',
     icon: Users,
     color: '#22c55e',
-    bg: 'linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(22, 163, 74, 0.05) 100%)',
-    border: 'rgba(34, 197, 94, 0.3)',
-    summary: 'Watch 4 AI robots (Security Guard, Truck Driver, Pricing Helper, and Legal Expert) talk and vote together.',
-    features: ['Peer-to-peer robot chat', '100% agreement consensus meter', 'Sliders to change robot rules'],
+    bg: 'linear-gradient(135deg, rgba(34, 197, 94, 0.12) 0%, rgba(22, 163, 74, 0.03) 100%)',
+    border: 'rgba(34, 197, 94, 0.25)',
+    summary: 'Four specialized autonomous agents (FraudSentinel, LogisticsAuditor, PricingStrategist, LegalArbitrator) debate and vote on chargebacks.',
+    features: [
+      'Real-time peer-to-peer agent messaging',
+      '100% unanimous consensus scoring',
+      'Tunable risk & policy sensitivity controls',
+    ],
     btnLabel: 'Enter War Room',
   },
   {
     id: 'omnichannel',
     category: 'robots',
-    title: 'Customer WhatsApp Phone',
-    tag: 'INTERACTIVE SMARTPHONE',
+    title: 'Omnichannel Customer Simulator',
+    tag: 'MESSAGING & VOICE OPS',
     tagColor: '#10b981',
     icon: Smartphone,
     color: '#10b981',
-    bg: 'linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.05) 100%)',
-    border: 'rgba(16, 185, 129, 0.3)',
-    summary: 'Play with a simulated smartphone! Chat on WhatsApp, split payments, and hear synthetic voice calls.',
-    features: ['Realistic WhatsApp & SMS simulator', 'Split installment payments', 'Live voice phone call audio'],
-    btnLabel: 'Open Phone Mockup',
+    bg: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(5, 150, 105, 0.03) 100%)',
+    border: 'rgba(16, 185, 129, 0.25)',
+    summary: 'Interactive smartphone mockup simulating WhatsApp recovery messages, flexible installment payment links, and outbound voice briefings.',
+    features: [
+      'Realistic WhatsApp & SMS chat simulation',
+      'Interactive installment payment actions',
+      'Gnani-powered synthetic voice read-backs',
+    ],
+    btnLabel: 'Launch Simulator',
   },
   {
     id: 'ledger',
     category: 'vault',
-    title: 'Tamper-Proof Lockbox (Vault)',
-    tag: 'BLOCKCHAIN SECURITY',
+    title: 'Cryptographic Ledger & Audit',
+    tag: 'SHA-256 IMMUTABILITY',
     tagColor: '#f59e0b',
     icon: Lock,
     color: '#f59e0b',
-    bg: 'linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(217, 119, 6, 0.05) 100%)',
-    border: 'rgba(245, 158, 11, 0.3)',
-    summary: 'A chain of digital lockboxes protecting money. Try to change the numbers and watch the red alarm sound!',
-    features: ['SHA-256 cryptographic chain', 'Simulate fake hacker attack', 'Restore integrity with 1 click'],
-    btnLabel: 'Test Digital Vault',
+    bg: 'linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(217, 119, 6, 0.03) 100%)',
+    border: 'rgba(245, 158, 11, 0.25)',
+    summary: 'Canonical immutable transaction chain with block-by-block SHA-256 hash chaining, WebCrypto auditability, and tamper simulation.',
+    features: [
+      'Deterministic SHA-256 hash chaining',
+      'Interactive tamper attack simulation',
+      'Sub-millisecond chain integrity audit',
+    ],
+    btnLabel: 'Inspect Ledger',
   },
   {
     id: 'red_team',
     category: 'vault',
-    title: 'Hacker Defense Sandbox',
-    tag: 'SHIELD TEST',
+    title: 'Security & Red-Team Sandbox',
+    tag: 'FAIL-CLOSED GOVERNANCE',
     tagColor: '#ef4444',
     icon: Bug,
     color: '#ef4444',
-    bg: 'linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.05) 100%)',
-    border: 'rgba(239, 68, 68, 0.3)',
-    summary: 'Fire pretend hacker tricks at our system and see our shields block every trick in under 15 milliseconds.',
-    features: ['Test Prompt Injections & Jailbreaks', 'Test Expired Token Replay', 'Block speed race attacks'],
-    btnLabel: 'Launch Pretend Attacks',
+    bg: 'linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(220, 38, 38, 0.03) 100%)',
+    border: 'rgba(239, 68, 68, 0.25)',
+    summary: 'Adversarial security testbed validating prompt injection resistance, expired token replay defenses, and spend cap enforcement.',
+    features: [
+      'Prompt injection & jailbreak testing',
+      'Token TTL & replay attack defense',
+      'Deterministic sub-15ms failure mitigation',
+    ],
+    btnLabel: 'Open Security Sandbox',
   },
 ];
 
 export default function SimpleMissionHub({ onNavigate }) {
   return (
     <div style={{
-      padding: '24px',
-      maxWidth: '1200px',
+      padding: '28px',
+      maxWidth: '1280px',
       margin: '0 auto',
       color: '#f8fafc',
       fontFamily: 'Inter, system-ui, sans-serif',
     }}>
-      {/* Friendly Hero Banner */}
+      {/* Platform Executive Header */}
       <div style={{
         background: 'radial-gradient(ellipse at top, #1e293b 0%, #0d1527 100%)',
         border: '1px solid #334155',
-        borderRadius: '20px',
+        borderRadius: '16px',
         padding: '28px 32px',
         marginBottom: '28px',
         display: 'flex',
@@ -124,67 +148,74 @@ export default function SimpleMissionHub({ onNavigate }) {
         alignItems: 'center',
         flexWrap: 'wrap',
         gap: '20px',
-        boxShadow: '0 12px 36px rgba(0,0,0,0.4)',
+        boxShadow: '0 12px 36px rgba(0,0,0,0.3)',
       }}>
-        <div style={{ maxWidth: '620px' }}>
+        <div style={{ maxWidth: '640px' }}>
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: '6px',
-            background: 'rgba(56, 189, 248, 0.15)',
-            border: '1px solid rgba(56, 189, 248, 0.4)',
+            background: 'rgba(56, 189, 248, 0.12)',
+            border: '1px solid rgba(56, 189, 248, 0.35)',
             color: '#38bdf8',
-            padding: '4px 10px',
+            padding: '4px 12px',
             borderRadius: '20px',
             fontSize: '11px',
             fontWeight: 700,
             marginBottom: '10px',
+            letterSpacing: '0.04em',
           }}>
-            <Sparkles size={13} />
-            <span>KIDS & BEGINNERS FRIENDLY EXPLORER</span>
+            <ShieldCheck size={13} />
+            <span>ENTERPRISE MULTI-AGENT PLATFORM</span>
           </div>
 
           <h2 style={{ fontSize: '24px', fontWeight: 800, margin: '0 0 8px 0', color: '#f8fafc', letterSpacing: '-0.5px' }}>
-            Welcome to Agentic E-Commerce!
+            Unified Operations & Commerce Workspace
           </h2>
-          <p style={{ fontSize: '14px', color: '#cbd5e1', lineHeight: 1.6, margin: 0 }}>
-            Everything is simple and safe here! Pick any mission below to see our AI shop, resolve delivery disputes, talk on WhatsApp, or test our unbreakable digital vault.
+          <p style={{ fontSize: '14px', color: '#94a3b8', lineHeight: 1.6, margin: 0 }}>
+            Autonomous conversational commerce, multi-agent dispute resolution, and verifiable cryptographic ledgers. Select any module below to inspect or operate.
           </p>
         </div>
 
+        {/* High-Level Operational Metrics */}
         <div style={{
           display: 'flex',
-          gap: '12px',
-          background: 'rgba(15, 23, 42, 0.8)',
+          gap: '16px',
+          background: 'rgba(15, 23, 42, 0.85)',
           border: '1px solid #1e293b',
-          borderRadius: '16px',
-          padding: '14px 20px',
+          borderRadius: '12px',
+          padding: '14px 22px',
           alignItems: 'center',
         }}>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '20px', fontWeight: 800, color: '#38bdf8' }}>10,000+</div>
-            <div style={{ fontSize: '11px', color: '#94a3b8' }}>Catalog Items</div>
+            <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 500 }}>Catalog SKUs</div>
           </div>
-          <div style={{ width: '1px', height: '30px', background: '#334155' }} />
+          <div style={{ width: '1px', height: '32px', background: '#334155' }} />
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '20px', fontWeight: 800, color: '#22c55e' }}>₹10,000</div>
-            <div style={{ fontSize: '11px', color: '#94a3b8' }}>Safety Cap</div>
+            <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 500 }}>Spend Limit</div>
           </div>
-          <div style={{ width: '1px', height: '30px', background: '#334155' }} />
+          <div style={{ width: '1px', height: '32px', background: '#334155' }} />
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '20px', fontWeight: 800, color: '#a855f7' }}>4 AI</div>
-            <div style={{ fontSize: '11px', color: '#94a3b8' }}>Robots Working</div>
+            <div style={{ fontSize: '20px', fontWeight: 800, color: '#a855f7' }}>4 Agents</div>
+            <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 500 }}>Consensus Net</div>
+          </div>
+          <div style={{ width: '1px', height: '32px', background: '#334155' }} />
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '20px', fontWeight: 800, color: '#10b981' }}>&lt;15ms</div>
+            <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 500 }}>Defense Gate</div>
           </div>
         </div>
       </div>
 
-      {/* Grid of 6 Friendly Big Mission Cards */}
+      {/* Grid of 6 Clean Workspace Module Cards */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
         gap: '20px',
       }}>
-        {MISSION_CARDS.map((card) => {
+        {WORKSPACE_CARDS.map((card) => {
           const Icon = card.icon;
           return (
             <div
@@ -192,40 +223,41 @@ export default function SimpleMissionHub({ onNavigate }) {
               style={{
                 background: card.bg,
                 border: `1px solid ${card.border}`,
-                borderRadius: '16px',
+                borderRadius: '14px',
                 padding: '24px',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'space-between',
-                gap: '16px',
-                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                gap: '18px',
+                transition: 'all 0.2s ease',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
               }}
             >
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                   <div style={{
-                    width: '40px',
-                    height: '40px',
-                    borderRadius: '12px',
-                    background: card.color,
-                    color: '#000000',
+                    width: '42px',
+                    height: '42px',
+                    borderRadius: '10px',
+                    background: `${card.color}20`,
+                    border: `1px solid ${card.color}40`,
+                    color: card.color,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    boxShadow: `0 0 16px ${card.color}66`,
                   }}>
-                    <Icon size={20} strokeWidth={2.5} />
+                    <Icon size={20} strokeWidth={2.2} />
                   </div>
 
                   <span style={{
                     fontSize: '10px',
                     fontWeight: 700,
-                    padding: '3px 8px',
+                    padding: '3px 9px',
                     borderRadius: '6px',
-                    background: `${card.tagColor}22`,
+                    background: `${card.tagColor}15`,
                     color: card.tagColor,
-                    border: `1px solid ${card.tagColor}44`,
+                    border: `1px solid ${card.tagColor}35`,
+                    letterSpacing: '0.04em',
                   }}>
                     {card.tag}
                   </span>
@@ -234,15 +266,14 @@ export default function SimpleMissionHub({ onNavigate }) {
                 <h3 style={{ fontSize: '17px', fontWeight: 700, color: '#f8fafc', margin: '0 0 8px 0' }}>
                   {card.title}
                 </h3>
-                <p style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: 1.5, margin: '0 0 14px 0' }}>
+                <p style={{ fontSize: '13px', color: '#94a3b8', lineHeight: 1.5, margin: '0 0 16px 0' }}>
                   {card.summary}
                 </p>
 
-                {/* Friendly bullet tags */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {card.features.map((feat, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#94a3b8' }}>
-                      <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: card.color }} />
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#cbd5e1' }}>
+                      <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: card.color, flexShrink: 0 }} />
                       <span>{feat}</span>
                     </div>
                   ))}
@@ -250,23 +281,32 @@ export default function SimpleMissionHub({ onNavigate }) {
               </div>
 
               <button
-                onClick={() => onNavigate(card.id)}
+                onClick={() => onNavigate && onNavigate(card.id)}
                 style={{
-                  width: '100%',
-                  background: card.color,
-                  color: '#000000',
-                  border: 'none',
-                  borderRadius: '10px',
-                  padding: '12px',
-                  fontSize: '13px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'flex',
+                  display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '8px',
-                  boxShadow: `0 4px 14px ${card.color}44`,
-                  transition: 'opacity 0.15s ease',
+                  width: '100%',
+                  padding: '11px 18px',
+                  borderRadius: '10px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: `1px solid ${card.border}`,
+                  color: '#f8fafc',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = card.color;
+                  e.currentTarget.style.color = '#000000';
+                  e.currentTarget.style.boxShadow = `0 0 16px ${card.color}66`;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                  e.currentTarget.style.color = '#f8fafc';
+                  e.currentTarget.style.boxShadow = 'none';
                 }}
               >
                 <span>{card.btnLabel}</span>

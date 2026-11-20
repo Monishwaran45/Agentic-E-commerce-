@@ -59,123 +59,107 @@ import catalogData from './data/catalog.json';
 const NAVIGATION_CATEGORIES = [
   {
     id: 'hub',
-    label: 'Mission Hub',
-    simpleLabel: 'Adventure Map',
+    label: 'Overview',
     icon: Compass,
     roles: ['admin', 'merchant', 'dispute_analyst'],
     tabs: [
       {
         id: 'hub',
-        label: 'Mission Hub',
-        simpleLabel: 'All Adventures',
+        label: 'Platform Overview',
         icon: Compass,
-        tip: 'Welcome to your AI Adventure Map! Click any card to explore shopping, robot meetings, delivery maps, or hacker shields.',
+        description: 'Executive dashboard with operational metrics, active multi-agent systems, and module quick-links.',
       },
     ],
   },
   {
     id: 'store',
-    label: 'Store & Shopping',
-    simpleLabel: 'Shop & Items',
+    label: 'Storefront',
     icon: Store,
     roles: ['admin', 'shopper', 'merchant'],
     tabs: [
       {
         id: 'shopping',
-        label: 'Shopping Assistant',
-        simpleLabel: 'Shop with AI Friend',
+        label: 'AI Shopping Assistant',
         icon: ShoppingBag,
-        tip: 'Chat with your AI shopping buddy! You can type in Hindi/Tamil, tap the microphone to talk, or use "Snap to Shop" for photo search.',
+        description: 'Multi-turn conversational assistant with Gnani Indic voice, multimodal Snap to Shop, and price negotiation.',
       },
       {
         id: 'catalog',
-        label: 'Browse Catalog',
-        simpleLabel: 'Item & Toy Shelf',
+        label: 'Product Catalog',
         icon: Library,
-        tip: 'See all items available in our store! Filter shoes, shirts, electronics, and tap any item to ask AI for a deal.',
+        description: 'Interactive verified catalog inventory across 10,000+ SKUs with dynamic stock status and filtering.',
       },
     ],
   },
   {
     id: 'disputes_nav',
-    label: 'Delivery & Proof',
-    simpleLabel: 'Delivery Map',
+    label: 'Disputes & Delivery',
     icon: Scale,
     roles: ['admin', 'dispute_analyst'],
     tabs: [
       {
         id: 'disputes',
-        label: 'Dispute Center & GPS',
-        simpleLabel: 'Delivery Satellite Map',
+        label: 'PayPal Dispute Center',
         icon: Scale,
-        tip: 'See real satellite delivery locations, 15m radius geofences, and customer signatures proving delivery.',
+        description: 'Carrier GPS satellite tracking, 15m radius geofences, and verifiable recipient delivery signatures.',
       },
       {
         id: 'approvals',
-        label: 'Human Review Inbox',
-        simpleLabel: 'Human Helper Inbox',
+        label: 'HITL Approvals Inbox',
         icon: Clock,
-        tip: 'When AI wants human advice on big refund decisions, approvals wait here for a single click.',
+        description: 'Dual-key human-in-the-loop review queue for over-budget spend elevations and sensitive concessions.',
       },
     ],
   },
   {
     id: 'ai_ops',
-    label: 'AI Operations',
-    simpleLabel: '4 AI Robots',
+    label: 'Agent Operations',
     icon: Users,
     roles: ['admin', 'dispute_analyst'],
     tabs: [
       {
         id: 'war_room',
         label: 'Multi-Agent War Room',
-        simpleLabel: '4 AI Robots Meeting',
         icon: Users,
-        tip: 'Watch 4 friendly AI robots (Guard, Driver, Price Helper, Legal Expert) debate and vote with 100% agreement.',
+        description: 'Collaborative peer-to-peer consensus deliberation among 4 specialized autonomous risk agents.',
       },
       {
         id: 'omnichannel',
-        label: 'WhatsApp & SMS Ops',
-        simpleLabel: 'Customer WhatsApp Phone',
+        label: 'Omnichannel Simulator',
         icon: Smartphone,
-        tip: 'Play with a simulated customer smartphone! Chat on WhatsApp, try split payments, or hear automated voice calls.',
+        description: 'Interactive smartphone testing WhatsApp recovery notifications, payment links, and voice briefings.',
       },
       {
         id: 'recovery',
-        label: 'Vasool Recovery Engine',
-        simpleLabel: 'Vasool Autopilot',
+        label: 'Vasool Recovery Pipeline',
         icon: Sparkles,
-        tip: 'The automated recovery brain managing customer cases, payment tracking, and autonomous notifications.',
+        description: 'Autonomous 6-phase debt recovery execution telemetry, case management, and settlement tracking.',
       },
     ],
   },
   {
     id: 'security_nav',
-    label: 'Safety & Vault',
-    simpleLabel: 'Safety Vault',
+    label: 'Security & Ledger',
     icon: ShieldCheck,
     roles: ['admin', 'merchant', 'dispute_analyst'],
     tabs: [
       {
         id: 'ledger',
         label: 'Cryptographic Ledger',
-        simpleLabel: 'Tamper-Proof Lockbox',
         icon: Database,
-        tip: 'A digital chain of unbreakable lockboxes. Try the "Simulate Attack" button to watch the security alarm sound!',
+        description: 'Canonical SHA-256 chained transaction blocks with WebCrypto audit and real-time tamper-testing.',
       },
       {
         id: 'red_team',
-        label: 'Red-Team Security Sandbox',
-        simpleLabel: 'Hacker Defense Game',
+        label: 'Security Sandbox',
         icon: Bug,
-        tip: 'Launch pretend cyber-attacks (like jailbreaks and expired receipts) and watch our shields block them in <15ms.',
+        description: 'Deterministic adversarial security suite validating prompt injection resistance and replay defense.',
       },
       {
         id: 'guardrails',
-        label: 'Security Matrix & Spend Cap',
-        simpleLabel: 'Safety Rules & Budget',
+        label: 'Guardrail Matrix',
         icon: ShieldCheck,
-        tip: 'Hard safety rules: AI is strictly blocked from spending over ₹10,000 or skipping customer permissions.',
+        description: 'Deterministic non-bypassable spend ceiling (₹10,000) and privacy consent enforcement.',
       },
     ],
   },
@@ -240,19 +224,6 @@ export default function App() {
     const storedRole = localStorage.getItem('user_role_pref') || 'admin';
     return storedRole === 'shopper' ? 'shopping' : 'hub';
   });
-
-  // Kid-Friendly / Easy Mode Toggle (defaults to true for clean, friendly UX)
-  const [simpleMode, setSimpleMode] = useState(() => {
-    return localStorage.getItem('simple_mode_pref') !== 'false';
-  });
-
-  const toggleSimpleMode = () => {
-    setSimpleMode((prev) => {
-      const next = !prev;
-      localStorage.setItem('simple_mode_pref', String(next));
-      return next;
-    });
-  };
 
   const availableCategories = NAVIGATION_CATEGORIES.filter((cat) => cat.roles.includes(userRole));
   const currentCategory = availableCategories.find((cat) => cat.tabs.some((t) => t.id === activeTab)) || availableCategories[0];
@@ -471,7 +442,7 @@ export default function App() {
         onChangeRole={handleRoleChange}
       />
 
-      {/* Level 1: Primary Category Bar */}
+      {/* Level 1: Primary Category Workspace Bar */}
       <nav
         style={{
           background: '#0d1322',
@@ -511,46 +482,26 @@ export default function App() {
                 }}
               >
                 <Icon size={16} />
-                <span>{simpleMode ? cat.simpleLabel : cat.label}</span>
+                <span>{cat.label}</span>
               </button>
             );
           })}
         </div>
 
-        {/* Right Nav Utilities: Kids / Pro Mode Toggle + Role Tag */}
+        {/* Right Nav Utilities: Active Role & System Health Indicator */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-          <button
-            onClick={toggleSimpleMode}
-            title={simpleMode ? "Switch to Pro View (technical labels & metrics)" : "Switch to Easy Mode (simplified labels & guide tips)"}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 14px',
-              borderRadius: '20px',
-              fontSize: '11px',
-              fontWeight: 700,
-              cursor: 'pointer',
-              background: simpleMode ? 'rgba(34, 197, 94, 0.18)' : 'rgba(148, 163, 184, 0.12)',
-              border: simpleMode ? '1px solid rgba(34, 197, 94, 0.45)' : '1px solid rgba(148, 163, 184, 0.25)',
-              color: simpleMode ? '#4ade80' : '#94a3b8',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            <span>{simpleMode ? '👶 Easy Mode: ON' : '💼 Pro View'}</span>
-          </button>
-
           <div style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span>Role:</span>
+            <span>Active Role:</span>
             <span style={{
               background: 'rgba(56, 189, 248, 0.15)',
               color: '#38bdf8',
-              padding: '2px 8px',
+              padding: '3px 9px',
               borderRadius: '6px',
-              fontWeight: 600,
+              fontWeight: 700,
               textTransform: 'uppercase',
               fontSize: '10px',
               letterSpacing: '0.04em',
+              border: '1px solid rgba(56, 189, 248, 0.3)',
             }}>
               {userRole}
             </span>
@@ -573,7 +524,7 @@ export default function App() {
           }}
         >
           <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginRight: '4px' }}>
-            {simpleMode ? currentCategory.simpleLabel : currentCategory.label}:
+            {currentCategory.label}:
           </span>
           {currentCategory.tabs.map((tab) => {
             const TabIcon = tab.icon;
@@ -599,44 +550,35 @@ export default function App() {
                 }}
               >
                 <TabIcon size={13} />
-                <span>{simpleMode ? tab.simpleLabel : tab.label}</span>
+                <span>{tab.label}</span>
               </button>
             );
           })}
         </div>
       )}
 
-      {/* Kid-Friendly Plain-English Helper Banner (Easy Mode Guide) */}
-      {simpleMode && currentTabObj?.tip && activeTab !== 'hub' && (
+      {/* Professional Context Guidance Strip */}
+      {currentTabObj?.description && activeTab !== 'hub' && (
         <div
           style={{
-            background: 'linear-gradient(90deg, rgba(56, 189, 248, 0.08) 0%, rgba(14, 165, 233, 0.02) 100%)',
-            borderBottom: '1px solid rgba(56, 189, 248, 0.2)',
-            padding: '7px 20px',
+            background: '#080c14',
+            borderBottom: '1px solid #1e293b',
+            padding: '6px 20px',
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
+            justifyContent: 'space-between',
             fontSize: '12px',
-            color: '#cbd5e1',
+            color: '#94a3b8',
             flexShrink: 0,
           }}
         >
-          <span
-            style={{
-              background: 'rgba(56, 189, 248, 0.2)',
-              color: '#38bdf8',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontSize: '10px',
-              fontWeight: 700,
-              letterSpacing: '0.04em',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            WHAT CAN YOU DO HERE?
-          </span>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {currentTabObj.tip}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: '#38bdf8', fontWeight: 600 }}>{currentTabObj.label}</span>
+            <span style={{ color: '#334155' }}>—</span>
+            <span style={{ color: '#cbd5e1' }}>{currentTabObj.description}</span>
+          </div>
+          <span style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap', marginLeft: '12px' }}>
+            Spend Cap: <strong style={{ color: '#10b981' }}>₹10,000 Safe</strong>
           </span>
         </div>
       )}
