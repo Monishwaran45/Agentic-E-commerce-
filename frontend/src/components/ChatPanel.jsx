@@ -1043,17 +1043,6 @@ export default function ChatPanel({
                     🇮🇳 हिन्दी (Hindi)
                   </button>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setInlineVoiceActive(true)}
-                  className="chat-interactive-voice-trigger"
-                  title="Launch Live Voice with Vyora (speaks Tamil, Hindi, English)"
-                >
-                  <Mic size={13} color="#38bdf8" />
-                  <span>Vyora Voice</span>
-                  <span className="voice-live-dot" style={{ width: '6px', height: '6px' }} />
-                </button>
               </div>
 
               <form onSubmit={handleSubmit} className="input-form">
